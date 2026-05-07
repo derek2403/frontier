@@ -1,0 +1,22 @@
+[package]
+name = "eth_demo"
+version.workspace = true
+description = "SODA ETH demo harness — Sepolia value transfer via CPI to soda"
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "eth_demo"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "soda/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+solana-program = { workspace = true }
+soda = { path = "../soda", features = ["cpi"] }
