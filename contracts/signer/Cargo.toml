@@ -1,0 +1,24 @@
+[package]
+name = "signer"
+version.workspace = true
+description = "SODA single-key signer daemon (1-of-1 dev signer)"
+edition.workspace = true
+
+[[bin]]
+name = "signer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = "0.22"
+borsh = { version = "1.6", features = ["derive"] }
+futures-util = "0.3"
+hex = "0.4"
+k256 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+solana-client = { workspace = true }
+solana-sdk = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
