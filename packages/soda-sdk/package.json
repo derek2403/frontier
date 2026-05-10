@@ -1,11 +1,32 @@
 {
-  "name": "soda-sdk",
+  "name": "@soda-sdk/core",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "SODA — derivation, RLP encoding, and Sepolia client. TS-source package shared by apps/demo and apps/web.",
+  "description": "SODA SDK: derivation, RLP encoding, and a Sepolia client. Lets a Solana program request external-chain signatures via SODA.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JingYuan0926/frontier.git",
+    "directory": "packages/soda-sdk"
+  },
+  "homepage": "https://github.com/JingYuan0926/frontier#readme",
+  "bugs": {
+    "url": "https://github.com/JingYuan0926/frontier/issues"
+  },
+  "keywords": [
+    "solana",
+    "anchor",
+    "soda",
+    "chain-signatures",
+    "secp256k1",
+    "ecdsa",
+    "ethereum",
+    "rlp",
+    "mpc"
+  ],
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./src/index.ts"
@@ -13,9 +34,29 @@
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
   "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm clean && pnpm build && pnpm test"
   },
   "dependencies": {
     "@noble/curves": "^1.6.0",
@@ -23,6 +64,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }
