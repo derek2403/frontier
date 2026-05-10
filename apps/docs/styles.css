@@ -19,6 +19,8 @@
    The wrap div keeps the button block-level inside MDX so it isn't
    stuffed into a <p> (which would hydrate-mismatch). */
 .soda-copy-prompt-wrap {
+  display: flex;
+  justify-content: flex-end;
   margin-top: 1rem;
 }
 .soda-copy-prompt {
