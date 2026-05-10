@@ -7,6 +7,7 @@ export default {
   architecture: 'Architecture',
   concepts: 'Concepts',
   guides: 'Guides',
+  agents: 'AI agents',
   reference: 'Reference',
   '-- links': {
     type: 'separator',

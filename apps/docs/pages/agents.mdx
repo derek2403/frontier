@@ -1,0 +1,96 @@
+---
+title: AI agents
+description: Use SODA from Claude Code, Codex, or any agent — there's a skill for that.
+---
+
+import { Callout, Tabs } from 'nextra/components'
+
+# AI agents
+
+If you're building with an AI coding agent (Claude Code, Codex, Cursor agent
+mode), there's a self-contained skill that teaches the agent how to install
+and use `@soda-sdk/core` correctly, with the right API signatures and the
+right pipeline shape.
+
+The skill lives in this repo at `.claude/skills/soda/SKILL.md`.
+
+<Callout type="info">
+  Why use the skill? Without it, an agent will guess function names and
+  parameters from training data and hallucinate. The skill ships the exact
+  current API surface, so the agent writes code that compiles.
+</Callout>
+
+## Install for Claude Code
+
+<Tabs items={['Inside this repo', 'Globally on your machine', 'Other agents']}>
+  <Tabs.Tab>
+
+Already wired. Claude Code auto-loads `.claude/skills/soda/SKILL.md` from
+the repo root when you launch it inside the cloned repo. Just describe
+what you want:
+
+> Use SODA to sign a Sepolia transaction from my Anchor program.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Copy the skill into your user-global skills dir so any project can use it:
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r .claude/skills/soda ~/.claude/skills/soda
+```
+
+Then in any other project:
+
+```
+> /soda
+```
+
+or just mention `@soda-sdk/core` in your prompt.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+`SKILL.md` is plain markdown with YAML frontmatter — anything that consumes
+agent skill files can use it. For Codex:
+
+```bash
+mkdir -p ~/.codex/skills
+cp -r .claude/skills/soda ~/.codex/skills/soda
+```
+
+For Cursor or other agents, copy the contents of `SKILL.md` into your
+agent's system prompt or rules file.
+
+  </Tabs.Tab>
+</Tabs>
+
+## What's in the skill
+
+- Install command (`pnpm add @soda-sdk/core @solana/web3.js @noble/hashes`).
+- The full request → sign → broadcast pipeline, in seven explicit steps.
+- API table with every exported function and its types.
+- Both flavors of `request_signature` (Anchor CPI from your program vs.
+  direct client ix for one-shot demos).
+- Common errors (`insufficient funds`, `AlreadyCompleted`,
+  `SignatureMismatch`) with fixes.
+- The "I just want to try it" shortcut: clone the reference repo and
+  run `./demo.sh`.
+
+## Trigger phrases
+
+The skill is invoked when the user says things like:
+
+- "Use SODA"
+- "Sign an Ethereum tx from a Solana program"
+- "I want a Solana PDA to control a Bitcoin UTXO"
+- "Build with `@soda-sdk/core`"
+- "Chain signatures from Solana"
+
+For Claude Code, you can also trigger it explicitly with `/soda`.
+
+## Source
+
+- Repo: https://github.com/derek2403/frontier (look in `.claude/skills/soda/`)
+- npm package: https://www.npmjs.com/package/@soda-sdk/core
