@@ -1,0 +1,24 @@
+{
+  "name": "soda-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm anchor:build && pnpm --filter soda-sdk build && pnpm --filter relayer build && pnpm --filter web build",
+    "test": "pnpm anchor:test",
+    "anchor:build": "cd contracts && anchor build",
+    "anchor:test": "cd contracts && anchor test",
+    "deploy:local": "cd contracts && anchor deploy",
+    "validator": "solana-test-validator --reset",
+    "signer": "cargo run --manifest-path contracts/Cargo.toml -p signer",
+    "relayer:dev": "pnpm --filter relayer dev",
+    "demo": "pnpm --filter demo demo",
+    "verify": "pnpm --filter demo verify",
+    "sdk:test": "pnpm --filter soda-sdk test",
+    "demo:test": "pnpm --filter soda-sdk test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

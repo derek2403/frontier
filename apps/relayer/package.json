@@ -1,0 +1,21 @@
+{
+  "name": "relayer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SODA relayer — listens for SigCompleted + EthTxRequested events on Solana and broadcasts the assembled signed Sepolia tx.",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/web3.js": "^1.95.0",
+    "soda-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

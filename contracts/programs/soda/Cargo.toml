@@ -1,0 +1,24 @@
+[package]
+name = "soda"
+version.workspace = true
+description = "SODA core — Solana chain-signature primitive"
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "soda"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+solana-program = { workspace = true }
+
+[dev-dependencies]
+k256 = { version = "0.13", features = ["arithmetic"] }

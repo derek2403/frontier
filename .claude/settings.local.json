@@ -1,8 +1,4 @@
 {
-  "model": "claude-opus-4-7",
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "high",
-  "skipDangerousModePermissionPrompt": true,
   "permissions": {
     "allow": [
       "Bash(*)",
@@ -17,5 +13,8 @@
       "NotebookEdit"
     ],
     "defaultMode": "bypassPermissions"
-  }
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "max",
+  "skipDangerousModePermissionPrompt": true
 }
