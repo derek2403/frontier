@@ -53,3 +53,15 @@
   background: rgb(64 64 64);
   border-color: rgb(82 82 82);
 }
+
+/* Code-block action buttons (copy / toggle word-wrap): Nextra hides them
+   under `_opacity-0` and only shows them on hover. Surface them at all
+   times so they're discoverable, fading them in fully on hover. */
+.nextra-code > div[class*="_absolute"] {
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
+}
+.nextra-code:hover > div[class*="_absolute"],
+.nextra-code:focus-within > div[class*="_absolute"] {
+  opacity: 1;
+}
