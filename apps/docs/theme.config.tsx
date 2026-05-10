@@ -3,7 +3,8 @@ import { DocsThemeConfig, useConfig } from 'nextra-theme-docs'
 
 const config: DocsThemeConfig = {
   logo: (
-    <span style={{ fontWeight: 700, letterSpacing: '0.04em' }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, letterSpacing: '0.04em' }}>
+      <img src="/logo.png" alt="SODA" width={28} height={28} style={{ borderRadius: 6 }} />
       SODA <span style={{ opacity: 0.6, fontWeight: 400 }}>docs</span>
     </span>
   ),
