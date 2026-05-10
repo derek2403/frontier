@@ -1,96 +1,200 @@
 ---
 title: AI agents
-description: Use SODA from Claude Code, Codex, or any agent — there's a skill for that.
+description: One-command install of the SODA skill into Claude Code, Codex, or Cursor — your agent learns to use @soda-sdk/core correctly without hallucinating.
 ---
 
-import { Callout, Tabs } from 'nextra/components'
+import { Callout, Tabs, Steps } from 'nextra/components'
 
-# AI agents
+# Use SODA from your AI agent
 
-If you're building with an AI coding agent (Claude Code, Codex, Cursor agent
-mode), there's a self-contained skill that teaches the agent how to install
-and use `@soda-sdk/core` correctly, with the right API signatures and the
-right pipeline shape.
+A self-contained skill that teaches an AI coding agent (Claude Code,
+Codex, Cursor, anything that reads markdown skill files) the exact
+current API surface of [`@soda-sdk/core`](https://www.npmjs.com/package/@soda-sdk/core).
 
-The skill lives in this repo at `.claude/skills/soda/SKILL.md`.
+Drop it into your agent's skills directory and from then on, prompts like
+*"sign an Ethereum tx from my Anchor program"* produce code that
+**compiles on the first try** — no hallucinated function names, no stale
+imports.
 
 <Callout type="info">
-  Why use the skill? Without it, an agent will guess function names and
-  parameters from training data and hallucinate. The skill ships the exact
-  current API surface, so the agent writes code that compiles.
+  Why use it? Without the skill, an agent guesses function names from
+  training data. The skill ships the live API surface (signatures, types,
+  the seven-step pipeline), so the agent writes correct code.
 </Callout>
 
-## Install for Claude Code
+## Install in one command
 
-<Tabs items={['Inside this repo', 'Globally on your machine', 'Other agents']}>
+<Tabs items={['Claude Code', 'Codex', 'Cursor / others']}>
   <Tabs.Tab>
 
-Already wired. Claude Code auto-loads `.claude/skills/soda/SKILL.md` from
-the repo root when you launch it inside the cloned repo. Just describe
-what you want:
+```bash
+mkdir -p ~/.claude/skills/soda && \
+  curl -fsSL https://raw.githubusercontent.com/derek2403/frontier/main/.claude/skills/soda/SKILL.md \
+    -o ~/.claude/skills/soda/SKILL.md
+```
 
-> Use SODA to sign a Sepolia transaction from my Anchor program.
+That's it. Open Claude Code in any project and trigger:
+
+```
+/soda
+```
+
+Or just describe what you want — the skill auto-invokes on phrases like
+"use SODA", "sign Ethereum from Solana", "@soda-sdk/core":
+
+> Build me an Anchor program that holds USDC on Sepolia under a PDA, and
+> withdraws it via SODA when a Solana governance vote passes.
 
   </Tabs.Tab>
   <Tabs.Tab>
 
-Copy the skill into your user-global skills dir so any project can use it:
-
 ```bash
-mkdir -p ~/.claude/skills
-cp -r .claude/skills/soda ~/.claude/skills/soda
+mkdir -p ~/.codex/skills/soda && \
+  curl -fsSL https://raw.githubusercontent.com/derek2403/frontier/main/.claude/skills/soda/SKILL.md \
+    -o ~/.codex/skills/soda/SKILL.md
 ```
 
-Then in any other project:
-
-```
-> /soda
-```
-
-or just mention `@soda-sdk/core` in your prompt.
+Codex consumes the same markdown-with-frontmatter format as Claude Code,
+so the file works as-is. Run `codex` in any project and it picks the
+skill up.
 
   </Tabs.Tab>
   <Tabs.Tab>
 
-`SKILL.md` is plain markdown with YAML frontmatter — anything that consumes
-agent skill files can use it. For Codex:
+Cursor and most other agents take rules / instructions as raw text.
+Append the skill body to your agent's rules file:
 
 ```bash
-mkdir -p ~/.codex/skills
-cp -r .claude/skills/soda ~/.codex/skills/soda
+curl -fsSL https://raw.githubusercontent.com/derek2403/frontier/main/.claude/skills/soda/SKILL.md \
+  >> .cursorrules
 ```
 
-For Cursor or other agents, copy the contents of `SKILL.md` into your
-agent's system prompt or rules file.
+For agents that want a system-prompt fragment instead, paste the body of
+[`SKILL.md`](https://github.com/derek2403/frontier/blob/main/.claude/skills/soda/SKILL.md)
+into your agent's instructions. The frontmatter section is optional;
+the body alone is the working knowledge.
 
   </Tabs.Tab>
 </Tabs>
 
-## What's in the skill
+## What the skill teaches your agent
 
-- Install command (`pnpm add @soda-sdk/core @solana/web3.js @noble/hashes`).
-- The full request → sign → broadcast pipeline, in seven explicit steps.
-- API table with every exported function and its types.
-- Both flavors of `request_signature` (Anchor CPI from your program vs.
-  direct client ix for one-shot demos).
-- Common errors (`insufficient funds`, `AlreadyCompleted`,
-  `SignatureMismatch`) with fixes.
-- The "I just want to try it" shortcut: clone the reference repo and
-  run `./demo.sh`.
+<Steps>
+
+### Install the right package
+
+`pnpm add @soda-sdk/core @solana/web3.js @noble/hashes` — ESM only, scoped
+under the `@soda-sdk` org.
+
+### Read the committee public key
+
+Pull `group_pk` from the on-chain `Committee` PDA (`99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4`
+on devnet), strip the Anchor discriminator, compress to 33 bytes.
+
+### Derive the deterministic foreign address
+
+`deriveEthAddress(groupPkCompressed, programId, seeds, chainTag)` returns
+`{ tweak, foreignPk, ethAddress }`. Same inputs → same address every
+time.
+
+### Build the unsigned legacy transaction
+
+`encodeUnsignedLegacy({ nonce, gasPriceWei, gasLimit, to, valueWeiBe, data, chainId })`
++ `keccak_256` from `@noble/hashes/sha3` for the payload.
+
+### Request the signature on Solana
+
+Either CPI from your Anchor program (`soda::cpi::request_signature(...)`)
+or a client-side ix on the deployed `soda` program. The skill shows both.
+
+### Wait for `SigCompleted`
+
+Subscribe to logs, decode the event with the `sha256("event:SigCompleted")[..8]`
+discriminator, extract `signature` and `recoveryId`.
+
+### Assemble + broadcast
+
+`eip155V(recoveryId, chainId)` → `encodeSignedLegacy(tx, v, r, s)` →
+`new EthRpc(url).sendRawTransaction(rawHex)`. Returns an Etherscan link.
+
+</Steps>
 
 ## Trigger phrases
 
-The skill is invoked when the user says things like:
+Once installed, the skill auto-invokes when your prompt mentions any of
+these. No manual `/soda` needed:
 
 - "Use SODA"
 - "Sign an Ethereum tx from a Solana program"
 - "I want a Solana PDA to control a Bitcoin UTXO"
+- "Cross-chain signing in Solana"
 - "Build with `@soda-sdk/core`"
 - "Chain signatures from Solana"
 
-For Claude Code, you can also trigger it explicitly with `/soda`.
+## Verify it's installed
 
-## Source
+<Tabs items={['Claude Code', 'Codex']}>
+  <Tabs.Tab>
 
-- Repo: https://github.com/derek2403/frontier (look in `.claude/skills/soda/`)
-- npm package: https://www.npmjs.com/package/@soda-sdk/core
+```bash
+ls ~/.claude/skills/soda/
+# expected: SKILL.md
+```
+
+In a Claude Code session:
+
+```
+/soda
+```
+
+If the slash command exists, the install worked.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+ls ~/.codex/skills/soda/
+# expected: SKILL.md
+```
+
+In a Codex session, type `/soda` or describe a SODA task — the agent
+should reference the skill in its plan.
+
+  </Tabs.Tab>
+</Tabs>
+
+## What's actually in `SKILL.md`
+
+The file is around 200 lines. Highlights:
+
+| Section | Why it's there |
+| --- | --- |
+| YAML frontmatter | Tells the agent when to auto-invoke the skill, and pre-approves `Bash(pnpm *) Bash(npm *) Bash(yarn *)` so installs don't prompt |
+| When to use / not use | Keeps the skill from triggering on unrelated Solana prompts |
+| Architecture diagram | One-glance mental model |
+| 7-step build | Code blocks for each step, copy-pasteable |
+| API at a glance | Table of every exported function with types |
+| `LegacyTx` shape | So the agent doesn't invent fields |
+| Common errors | `insufficient funds`, `AlreadyCompleted`, `SignatureMismatch` with fixes |
+| "Just try it" path | Clone the repo, `./demo.sh`, see real Sepolia tx |
+
+[View the source on GitHub →](https://github.com/derek2403/frontier/blob/main/.claude/skills/soda/SKILL.md)
+
+## Update or uninstall
+
+```bash
+# Update to the latest version (re-run the install command)
+curl -fsSL https://raw.githubusercontent.com/derek2403/frontier/main/.claude/skills/soda/SKILL.md \
+  -o ~/.claude/skills/soda/SKILL.md
+
+# Uninstall
+rm -rf ~/.claude/skills/soda    # or ~/.codex/skills/soda
+```
+
+## Next
+
+- [Sign an Ethereum tx](/guides/sign-an-eth-tx) — the same flow as a
+  human-readable walkthrough.
+- [`@soda-sdk/core` reference](/reference/soda-sdk) — full API surface.
+- [Architecture](/architecture) — what the agent is actually orchestrating
+  under the hood.
