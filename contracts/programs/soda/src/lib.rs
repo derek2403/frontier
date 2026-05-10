@@ -41,4 +41,12 @@ pub mod soda {
     ) -> Result<()> {
         instructions::finalize_signature::handler(ctx, signature, recovery_id)
     }
+
+    pub fn update_committee(
+        ctx: Context<UpdateCommittee>,
+        new_group_pk: [u8; 33],
+        new_signer_count: u8,
+    ) -> Result<()> {
+        instructions::update_committee::handler(ctx, new_group_pk, new_signer_count)
+    }
 }
