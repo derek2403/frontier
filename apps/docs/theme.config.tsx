@@ -1,5 +1,6 @@
 import React from 'react'
 import { DocsThemeConfig, useConfig } from 'nextra-theme-docs'
+import { ClaudeIcon, ChatGPTIcon } from './components/icons'
 
 const config: DocsThemeConfig = {
   logo: (
@@ -13,7 +14,9 @@ const config: DocsThemeConfig = {
     dismissible: true,
     content: (
       <a href="/agents" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-        🤖 <strong>New:</strong> Install the SODA skill into Claude Code, Codex, or Cursor in one command →
+        <ClaudeIcon size={16} />
+        <ChatGPTIcon size={16} />
+        <strong>New:</strong> Install the SODA skill into Claude Code, Codex, or Cursor in one command →
       </a>
     ),
   },

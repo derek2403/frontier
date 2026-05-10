@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ClaudeIcon, ChatGPTIcon } from './icons'
 
 type Props = {
   prompt: string
@@ -41,7 +42,10 @@ ${prompt}`
       className="soda-copy-prompt"
       aria-live="polite"
     >
-      <span style={{ fontSize: '1rem', lineHeight: 1 }}>{copied ? '✅' : '🤖'}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+        <ClaudeIcon size={14} />
+        <ChatGPTIcon size={14} />
+      </span>
       <span>{copied ? 'Copied — paste into your AI' : label}</span>
     </button>
   )
