@@ -1,0 +1,100 @@
+---
+title: Introduction
+---
+
+import { Callout, Cards, Steps } from 'nextra/components'
+
+# SODA: Chain Signatures for Solana
+
+> **Solana-Owned Derived Authority.**
+> A Solana program just spent a Bitcoin UTXO. No wrapped tokens. No bridge. No custodian.
+
+SODA is an Anchor program plus an off-chain MPC committee that exposes cross-chain
+signing as a **CPI primitive**. Any Solana program calls one instruction and
+receives a valid `secp256k1` signature on Bitcoin, Ethereum, or any other ECDSA
+chain. The foreign-chain address is deterministically derived from the caller's
+`(program_id, seeds)`, so a Solana PDA literally owns the UTXO.
+
+```rust
+soda::request_signature(
+    derivation_path,   // arbitrary per-request path
+    payload_hash,      // 32-byte message to sign
+    target_chain,      // BTC, ETH, any ECDSA chain
+)
+```
+
+<Callout type="info">
+  v0 is live on Solana devnet and Sepolia. Run `./demo.sh` from the repo to
+  produce a real Sepolia transaction signed by a Solana program.
+</Callout>
+
+## Install the SDK
+
+The TypeScript SDK is published on npm as
+[`@soda-sdk/core`](https://www.npmjs.com/package/@soda-sdk/core).
+Pull it into any Node / Next / Vite project:
+
+```bash
+pnpm add @soda-sdk/core
+# or
+npm install @soda-sdk/core
+```
+
+A four-line example to derive your Solana PDA's Sepolia address:
+
+```ts
+import { deriveEthAddress, ETH_SEPOLIA_CHAIN_TAG } from '@soda-sdk/core'
+import { PublicKey } from '@solana/web3.js'
+
+const { ethAddress } = deriveEthAddress(
+  groupPkCompressed,                 // committee aggregate pubkey, 33 bytes
+  new PublicKey(callerProgramId).toBytes(),
+  seeds,
+  ETH_SEPOLIA_CHAIN_TAG,
+)
+```
+
+Read the full [Sign an Ethereum tx](/guides/sign-an-eth-tx) guide for the
+end-to-end flow (build unsigned RLP, request the on-chain signature,
+broadcast).
+
+## What this unlocks
+
+A Solana PDA is, cryptographically, the owner of the foreign UTXO or account.
+No wrapper, no bridge message, no custodian in the path. That single primitive
+lets you build:
+
+- **Native BTC / ETH vaults** controlled by Solana program logic.
+- **Smart-contract wallets** for autonomous agents that must sign external-chain
+  transactions without a human in the loop.
+- **Cross-chain DeFi** where a Solana strategy directly spends Bitcoin or
+  Ethereum balances under PDA authority.
+- **Restaking-secured custody** where committee misbehavior is slashable.
+
+## How it differs
+
+| Today | With SODA |
+| --- | --- |
+| Wrapped tokens (wBTC, cbBTC) — custodial IOUs | A Solana PDA holds its own private key on the foreign chain |
+| Bridges — pass messages, get hacked | No bridge. Bitcoin never learns Solana exists. |
+| Humans signing on every chain | One CPI call from program logic, no human in the loop |
+
+## Where to next
+
+<Cards>
+  <Cards.Card title="Quickstart" href="/quickstart">
+    Run the v0 demo end-to-end. Solana → Sepolia in one command.
+  </Cards.Card>
+  <Cards.Card title="Architecture" href="/architecture">
+    The full request → sign → finalize → broadcast pipeline.
+  </Cards.Card>
+  <Cards.Card title="Concepts" href="/concepts/derivation">
+    Derivation, on-chain verification, and the committee.
+  </Cards.Card>
+  <Cards.Card title="Use the SDK" href="/guides/sign-an-eth-tx">
+    Sign a Sepolia transaction end-to-end with `@soda-sdk/core` in TypeScript.
+  </Cards.Card>
+  <Cards.Card title="Reference" href="/reference/soda-program">
+    Program instructions, events, and the TypeScript SDK.
+  </Cards.Card>
+</Cards>

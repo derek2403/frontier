@@ -1,0 +1,227 @@
+---
+title: "@soda-sdk/core"
+description: TypeScript SDK exports, types, and install paths.
+---
+
+import { Callout, Tabs } from 'nextra/components'
+
+# `@soda-sdk/core` (TypeScript)
+
+[![npm version](https://img.shields.io/npm/v/@soda-sdk/core.svg?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/@soda-sdk/core)
+[![npm downloads](https://img.shields.io/npm/dm/@soda-sdk/core.svg?style=flat-square)](https://www.npmjs.com/package/@soda-sdk/core)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/@soda-sdk/core?style=flat-square&label=min%2Bgzip)](https://bundlephobia.com/package/@soda-sdk/core)
+
+ESM-only TypeScript SDK for SODA. Published to the public npm registry as
+[`@soda-sdk/core`](https://www.npmjs.com/package/@soda-sdk/core). Source
+lives at `packages/soda-sdk/` in the monorepo and is used by the demo CLI,
+the web app, the relayer, and any external project.
+
+## Install
+
+<Tabs items={['From npm', 'In this monorepo']}>
+  <Tabs.Tab>
+
+```bash
+pnpm add @soda-sdk/core
+# or
+npm install @soda-sdk/core
+# or
+yarn add @soda-sdk/core
+```
+
+The published package ships ESM + `.d.ts` from `dist/` (built with `tsup`).
+Two runtime deps come along: `@noble/curves` and `@noble/hashes`.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```jsonc
+// apps/your-app/package.json
+{
+  "dependencies": {
+    "@soda-sdk/core": "workspace:*"
+  }
+}
+```
+
+In the monorepo the package's `exports` resolve to `src/index.ts` directly,
+so `tsx`, Vitest, and Next.js with `transpilePackages: ["@soda-sdk/core"]` all
+pick up the source files without a build step. Only `pnpm publish` (or
+`pnpm pack`) switches the entrypoint to the built `dist/`, via
+`publishConfig`.
+
+  </Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+  ESM only. If you need CommonJS, transpile in your build step or open an
+  issue.
+</Callout>
+
+## Imports
+
+```ts
+import {
+  // Derivation
+  computeTweak,
+  deriveForeignPk,
+  ethAddressFromPk,
+  deriveEthAddress,
+
+  // Encoding helpers
+  bigintToBe,
+  bytesToBigInt,
+
+  // Ethereum RLP
+  encodeUnsignedLegacy,
+  encodeSignedLegacy,
+  decodeUnsignedLegacy,
+  eip155V,
+  type LegacyTx,
+
+  // RPC client
+  EthRpc,
+
+  // Constants
+  DERIVATION_DOMAIN,
+  ETH_SEPOLIA_CHAIN_TAG,
+} from '@soda-sdk/core'
+```
+
+## Derivation
+
+### `computeTweak(programId, seeds, chainTag): Uint8Array`
+
+Returns the 32-byte tweak: `sha256("SODA-v1" || programId || seeds || chainTag)`.
+All inputs are `Uint8Array`.
+
+### `deriveForeignPk(groupPkCompressed, tweak): Uint8Array`
+
+Computes `groupPk + tweak·G` on secp256k1 via `@noble/curves` and returns the
+65-byte uncompressed `0x04 || X || Y`. `groupPkCompressed` is the 33-byte
+compressed committee pubkey.
+
+### `ethAddressFromPk(uncompressedPk: Uint8Array): Uint8Array`
+
+`keccak256(pk[1..])[12..]`. Returns 20 bytes. Pass through `0x` + hex if you
+want a string.
+
+### `deriveEthAddress(groupPkCompressed, programId, seeds, chainTag)`
+
+Convenience wrapper. Returns:
+
+```ts
+{
+  tweak: Uint8Array,       // 32 bytes
+  foreignPk: Uint8Array,   // 65 bytes uncompressed
+  ethAddress: Uint8Array,  // 20 bytes
+}
+```
+
+## Ethereum RLP
+
+```ts
+type LegacyTx = {
+  nonce: bigint
+  gasPriceWei: bigint
+  gasLimit: bigint
+  to: Uint8Array        // 20 bytes
+  valueWeiBe: Uint8Array // big-endian wei amount, variable length
+  data: Uint8Array
+  chainId: bigint       // for EIP-155 sighash
+}
+```
+
+### `encodeUnsignedLegacy(tx: LegacyTx): Uint8Array`
+
+Returns the RLP encoding of `[nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]`.
+`keccak256` this to get the 32-byte payload to sign.
+
+### `encodeSignedLegacy(base, v, r, s): Uint8Array`
+
+Signature: `(base: Omit<LegacyTx, 'chainId'>, v: bigint, r: Uint8Array, s: Uint8Array)`.
+Returns the broadcastable RLP. `r` and `s` are each 32 bytes (the two halves
+of the on-chain signature). `v` must be the EIP-155 value, not the raw
+recovery id — use `eip155V`.
+
+### `decodeUnsignedLegacy(rlp: Uint8Array): LegacyTx`
+
+Inverse of `encodeUnsignedLegacy`. Used by the relayer to recover tx params
+from the unsigned RLP carried by `eth_demo`'s `EthTxRequested` event, so it
+can re-assemble a signed RLP for broadcast once `SigCompleted` lands.
+
+### `eip155V(recoveryId, chainId): bigint`
+
+Returns `recoveryId + 35n + 2n * chainId`. Both arguments are required.
+
+## RPC client
+
+### `new EthRpc(url: string)`
+
+Tiny JSON-RPC wrapper used by the demo CLI and the relayer.
+
+```ts
+const rpc = new EthRpc(process.env.SEPOLIA_RPC_URL!)
+
+const balance  = await rpc.getBalance(addrHex)         // bigint, wei
+const nonce    = await rpc.getNonce(addrHex)           // bigint
+const gasPrice = await rpc.getGasPrice()               // bigint
+const txHash   = await rpc.sendRawTransaction(rawHex)  // 0x-prefixed string
+
+// Generic escape hatch
+const x = await rpc.call<string>('eth_blockNumber', [])
+
+// Read back the URL
+console.log(rpc.endpoint)
+```
+
+`addrHex` and `rawHex` should be `0x`-prefixed strings.
+
+## Helpers
+
+| Function | Behavior |
+| --- | --- |
+| `bigintToBe(n, len): Uint8Array` | Big-endian encoding of `n`, left-padded to `len` bytes |
+| `bytesToBigInt(b): bigint` | Inverse |
+
+## Constants
+
+| Name | Type | Value |
+| --- | --- | --- |
+| `DERIVATION_DOMAIN` | `Uint8Array` | UTF-8 bytes of `"SODA-v1"` |
+| `ETH_SEPOLIA_CHAIN_TAG` | `Uint8Array` | Sepolia chain-tag bytes |
+
+Adding a new chain means defining a new `chain_tag` constant and an
+encoder module (`packages/soda-sdk/src/<chain>.ts`).
+
+## Tests
+
+13 vitest cases run with `pnpm sdk:test`:
+
+- `derive.test.ts` — canonical secp256k1 vectors (G + G = 2G, etc.) plus
+  Rust parity from `derivation.rs`.
+- `rlp.test.ts` — EIP-155 mainnet canonical vector + round-trip tests.
+
+## Building and publishing
+
+```bash
+pnpm --filter @soda-sdk/core build   # tsup → dist/index.js + dist/index.d.ts
+pnpm --filter @soda-sdk/core test    # vitest (also runs in prepublishOnly)
+pnpm --filter @soda-sdk/core publish # uses publishConfig to switch exports to dist
+```
+
+`publishConfig` in `package.json` overrides `exports`, `main`, and `types`
+to point at `dist/` only at publish time, so workspace consumers keep
+reading raw `src/` while published consumers get the compiled output.
+
+## Adding a new chain
+
+1. Add a chain tag constant: `BTC_TESTNET_CHAIN_TAG`.
+2. Create `packages/soda-sdk/src/bitcoin.ts` with BIP143 sighash + P2WPKH
+   address encoding.
+3. Add tests with known-answer vectors against `bitcoinjs-lib`.
+4. Re-export from `index.ts`.
+5. Add a corresponding `programs/btc_demo/` for the on-chain harness.
+
+The core `soda` program does not change: a new chain is purely an
+off-chain encoding plus a new caller program.

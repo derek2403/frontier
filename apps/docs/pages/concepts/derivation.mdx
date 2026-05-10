@@ -1,0 +1,103 @@
+---
+title: Derivation
+---
+
+import { Callout } from 'nextra/components'
+
+# Derivation
+
+Every Solana PDA controls a deterministic foreign-chain address. There is no
+mapping table, no registration step, and no shared state between the caller
+and `soda`. The address is computed from the caller's identity alone.
+
+## The formula
+
+```
+tweak       = sha256("SODA-v1" || program_id || seeds || chain_tag)
+foreign_pk  = group_pk + tweak · G
+foreign_addr = address_encoding(foreign_pk, chain_tag)
+```
+
+Where:
+
+- `program_id` is the calling Solana program (e.g., `eth_demo` or any user program).
+- `seeds` are arbitrary per-request bytes (analogous to PDA seeds: a vault id,
+  a strategy index, a user pubkey).
+- `chain_tag` selects the foreign chain (`ETH_SEPOLIA`, `ETH_MAINNET`,
+  `BTC_TESTNET`, etc.).
+- `group_pk` is the committee's aggregate public key on the secp256k1 curve.
+- `G` is the secp256k1 generator point.
+- `address_encoding` is chain-specific: keccak256 last-20-bytes for Ethereum,
+  HASH160 + bech32 for Bitcoin P2WPKH, and so on.
+
+## Why this works
+
+The same tweak applied to the secret key as to the public key yields a key
+pair that signs validly under the derived `foreign_pk`:
+
+```
+sk' = (group_sk + tweak)  mod n
+pk' = sk' · G
+    = (group_sk + tweak) · G
+    = group_sk · G + tweak · G
+    = group_pk + tweak · G
+    = foreign_pk
+```
+
+So a signature produced with `sk'` recovers to `foreign_pk` under the foreign
+chain's standard signature verification. From Bitcoin or Ethereum's point of
+view, a normal ECDSA signature signed a normal transaction. The chain has no
+idea Solana exists.
+
+## Domain separation
+
+The leading `"SODA-v1"` constant prevents tweak collisions across:
+
+- Different versions of the protocol (v1 vs a future v2 schema).
+- Other applications using the same `group_pk` for unrelated derivations.
+
+Changing the domain string is a hard fork: every derived address changes.
+
+## v0 caveat: derivation is computed off-chain
+
+In v0, the caller computes `foreign_pk_xy` and passes it into
+`soda::request_signature`. The `soda` program **does not verify** that the
+caller derived `foreign_pk` correctly from the formula above. It only uses
+the value as the expected `secp256k1_recover` output during finalization.
+
+<Callout type="warning">
+  This means a malicious caller in v0 could pass an arbitrary `foreign_pk_xy`
+  and request a signature for it. Because the committee is also a single dev
+  signer in v0, this does not increase real attack surface beyond "trust the
+  committee." But it is not the production design.
+</Callout>
+
+## v1 path to on-chain derivation
+
+The first attempt did `group_pk + tweak·G` on-chain via `k256::ProjectivePoint`
+ops. That blew the BPF 4 KB stack. Three viable paths to re-enable:
+
+1. **Heap allocation.** `Box::new` the heavy intermediates so the curve
+   operations live on the heap (32 KB available) instead of the stack.
+2. **`#[inline(never)]` everywhere.** Spread stack frames across many small
+   functions so no single frame exceeds the budget.
+3. **Solana point-add syscall.** Lobby for / wait for a native syscall for
+   secp256k1 point addition (analogous to the existing alt-bn128 syscalls).
+4. **zk verification.** Verify the derivation off-chain inside a SNARK and
+   submit the proof. Alt-bn128 syscalls are already available on Solana.
+
+See [Architecture → Trust model](/architecture#trust-model-in-v0-vs-v1) for
+where this fits in the v0 → v1 progression.
+
+## Parity testing
+
+The derivation algorithm is implemented twice for cross-language testing:
+
+- TypeScript: `packages/soda-sdk/src/derive.ts` (production path; used by
+  the demo, web app, and relayer).
+- Rust: `contracts/programs/soda/src/derivation.rs` (`#[cfg(test)]` only;
+  kept for parity tests against the TS implementation).
+
+Run `pnpm sdk:test` (TS, 13 vitest cases) and `cargo test --workspace --lib`
+(Rust, 16 cases) to verify both implementations agree on the canonical
+G + G = 2G vector and known-answer ETH address derivations.

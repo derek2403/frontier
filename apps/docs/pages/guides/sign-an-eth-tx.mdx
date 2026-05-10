@@ -1,0 +1,304 @@
+---
+title: Sign an Ethereum transaction
+description: End-to-end walkthrough of using @soda-sdk/core to derive an address, request a signature, and broadcast on Sepolia.
+---
+
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Sign an Ethereum transaction
+
+A complete end-to-end walkthrough of using `@soda-sdk/core` from a TypeScript
+client. By the end you'll have a Solana-PDA-controlled address that just
+broadcast a real Sepolia transaction, with no private key in sight.
+
+<Callout type="info">
+  This guide shows the **client-side** pieces (TypeScript). The Solana side
+  (CPIing into `soda::request_signature`, listening for `SigCompleted`) can
+  either be done from your own Anchor program (production shape) or from a
+  one-shot client instruction (what `apps/demo` does). Both flows use the
+  same SDK calls below.
+</Callout>
+
+## Prerequisites
+
+- A Solana keypair on devnet with a few SOL.
+- An Alchemy or Infura Sepolia RPC URL.
+- A funded derived address. (You'll see how to compute it in step 2; once
+  computed, send around `0.001 ETH` from a Sepolia faucet to that address.
+  The address is deterministic, so you fund it once and demo many times.)
+
+## Install
+
+```bash
+pnpm add @soda-sdk/core @solana/web3.js @noble/hashes
+```
+
+`@noble/hashes` is needed for `keccak256` (not re-exported from the SDK).
+
+## Step 1: Read the committee public key
+
+The committee's aggregate public key (`group_pk`) lives in the `Committee`
+PDA on-chain. You can either:
+
+<Tabs items={['Read it from chain', 'Copy from local keystore (dev)']}>
+  <Tabs.Tab>
+
+```ts
+import { Connection, PublicKey } from '@solana/web3.js'
+
+const SODA_PROGRAM_ID = new PublicKey(
+  '99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4',
+)
+
+const conn = new Connection('https://api.devnet.solana.com')
+const [committeePda] = PublicKey.findProgramAddressSync(
+  [Buffer.from('committee')],
+  SODA_PROGRAM_ID,
+)
+
+const acct = await conn.getAccountInfo(committeePda)
+if (!acct) throw new Error('Committee not initialized')
+
+// The first 8 bytes are the Anchor discriminator; group_pk_xy is next 64 bytes.
+const xy = acct.data.subarray(8, 8 + 64)
+const x = xy.subarray(0, 32)
+const y = xy.subarray(32, 64)
+
+// Compress to 33 bytes (0x02 or 0x03 prefix + X)
+const yIsOdd = (y[31] & 1) === 1
+const groupPkCompressed = new Uint8Array(33)
+groupPkCompressed[0] = yIsOdd ? 0x03 : 0x02
+groupPkCompressed.set(x, 1)
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+For local development, the dev signer key is at `keyshare.dev.json` (a
+hex secret). To get the matching compressed public key:
+
+```ts
+import { secp256k1 } from '@noble/curves/secp256k1'
+import { readFileSync } from 'node:fs'
+
+const sk = new Uint8Array(JSON.parse(readFileSync('keyshare.dev.json', 'utf-8')))
+const groupPkCompressed = secp256k1.getPublicKey(sk, true) // true = compressed
+```
+
+This shortcut only works against a single dev signer (v0). The on-chain
+read above is the path that survives v1 (FROST committee).
+
+  </Tabs.Tab>
+</Tabs>
+
+## Step 2: Derive your ETH address
+
+Pick the Solana program that's going to "own" the address. In the demo,
+that's `eth_demo`. In your own setup, it's whichever Anchor program will
+issue the `request_signature` CPI.
+
+```ts
+import { deriveEthAddress, ETH_SEPOLIA_CHAIN_TAG } from '@soda-sdk/core'
+import { PublicKey } from '@solana/web3.js'
+
+const requesterProgram = new PublicKey(
+  '9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM', // eth_demo
+).toBytes()
+
+// Arbitrary: any per-request bytes you want. PDA seeds work great here.
+// In the demo: empty seeds, so each program gets one canonical address.
+const seeds = new Uint8Array(0)
+
+const { ethAddress, foreignPk } = deriveEthAddress(
+  groupPkCompressed,
+  requesterProgram,
+  seeds,
+  ETH_SEPOLIA_CHAIN_TAG,
+)
+
+console.log('Your ETH address:', '0x' + Buffer.from(ethAddress).toString('hex'))
+```
+
+This is deterministic: same inputs always produce the same address. Fund
+it once on Sepolia, demo forever.
+
+## Step 3: Build the unsigned transaction
+
+```ts
+import {
+  encodeUnsignedLegacy,
+  bigintToBe,
+  EthRpc,
+  type LegacyTx,
+} from '@soda-sdk/core'
+import { keccak_256 } from '@noble/hashes/sha3'
+
+const rpc = new EthRpc(process.env.SEPOLIA_RPC_URL!)
+
+const fromAddrHex = '0x' + Buffer.from(ethAddress).toString('hex')
+const nonce    = await rpc.getNonce(fromAddrHex)
+const gasPrice = await rpc.getGasPrice()
+
+const tx: LegacyTx = {
+  nonce,
+  gasPriceWei: gasPrice,
+  gasLimit: 21_000n,
+  to: ethAddress,                                    // self-transfer for demo
+  valueWeiBe: bigintToBe(100_000_000_000_000n, 32),  // 0.0001 ETH
+  data: new Uint8Array(),
+  chainId: 11155111n,                                // Sepolia
+}
+
+const unsignedRlp = encodeUnsignedLegacy(tx)
+const payloadHash = keccak_256(unsignedRlp)          // 32 bytes — what gets signed
+```
+
+## Step 4: Request the signature on Solana
+
+This is the only step that doesn't go through `@soda-sdk/core` — it's a Solana
+instruction call. You have two shapes:
+
+<Tabs items={['Production: CPI from your program', 'Demo: client-side ix']}>
+  <Tabs.Tab>
+
+In your own Anchor program:
+
+```rust
+use soda::cpi::accounts::RequestSignature;
+use soda::cpi::request_signature;
+
+let cpi_ctx = CpiContext::new(
+    ctx.accounts.soda_program.to_account_info(),
+    RequestSignature {
+        sig_request: ctx.accounts.sig_request.to_account_info(),
+        committee:   ctx.accounts.committee.to_account_info(),
+        payer:       ctx.accounts.payer.to_account_info(),
+        system_program: ctx.accounts.system_program.to_account_info(),
+    },
+);
+request_signature(
+    cpi_ctx,
+    foreign_pk_xy,    // X || Y, 64 bytes — your caller computes this
+    seeds,            // arbitrary identifying bytes
+    payload_hash,     // 32-byte keccak256(unsigned_rlp)
+    chain_tag,        // ETH_SEPOLIA_CHAIN_TAG bytes
+)?;
+```
+
+See `contracts/programs/eth_demo/src/lib.rs` for a complete working example.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+For a quick client-side test (no caller program needed), build the
+instruction directly with the IDL:
+
+```ts
+import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor'
+// ... load idl, set up provider ...
+
+const sodaProgram = new Program(sodaIdl, SODA_PROGRAM_ID, provider)
+
+// foreign_pk_xy is the 64-byte uncompressed key without the 0x04 prefix.
+const foreignPkXy = foreignPk.subarray(1)
+
+const sig = await sodaProgram.methods
+  .requestSignature(
+    Array.from(foreignPkXy),
+    Buffer.from(seeds),
+    Array.from(payloadHash),
+    Buffer.from(ETH_SEPOLIA_CHAIN_TAG),
+  )
+  .accounts({ /* sig_request PDA, committee, payer */ })
+  .rpc()
+```
+
+  </Tabs.Tab>
+</Tabs>
+
+## Step 5: Wait for `SigCompleted`
+
+The on-chain `finalize_signature` instruction emits `SigCompleted` once the
+committee returns a valid signature. Subscribe via `Connection.onLogs`:
+
+```ts
+import { Connection, PublicKey } from '@solana/web3.js'
+
+function waitForSigCompleted(
+  conn: Connection,
+  sigRequestPda: PublicKey,
+): Promise<{ signature: Uint8Array; recoveryId: number }> {
+  return new Promise((resolve, reject) => {
+    const subId = conn.onLogs(SODA_PROGRAM_ID, (logs) => {
+      for (const line of logs.logs) {
+        if (!line.startsWith('Program data: ')) continue
+        const data = Buffer.from(line.slice('Program data: '.length), 'base64')
+        // First 8 bytes = sha256("event:SigCompleted")[..8]
+        // Then borsh-encoded { sig_request: Pubkey, signature: [u8;64], recovery_id: u8 }
+        if (!data.subarray(0, 8).equals(SIG_COMPLETED_DISC)) continue
+        const requestPk = new PublicKey(data.subarray(8, 40))
+        if (!requestPk.equals(sigRequestPda)) continue
+
+        const signature = new Uint8Array(data.subarray(40, 40 + 64))
+        const recoveryId = data[40 + 64]
+        conn.removeOnLogsListener(subId).then(() => resolve({ signature, recoveryId }))
+        return
+      }
+    })
+    setTimeout(() => reject(new Error('Timed out waiting for SigCompleted')), 30_000)
+  })
+}
+```
+
+`SIG_COMPLETED_DISC` is `sha256('event:SigCompleted').slice(0, 8)` — see
+`apps/relayer/src/index.ts` for the canonical decoder.
+
+## Step 6: Assemble and broadcast
+
+This is pure SDK work:
+
+```ts
+import { encodeSignedLegacy, eip155V } from '@soda-sdk/core'
+
+const { signature, recoveryId } = await waitForSigCompleted(conn, sigRequestPda)
+
+const r = signature.subarray(0, 32)
+const s = signature.subarray(32, 64)
+const v = eip155V(recoveryId, tx.chainId)
+
+const signedRlp = encodeSignedLegacy(tx, v, r, s)
+const rawHex = '0x' + Buffer.from(signedRlp).toString('hex')
+
+const txHash = await rpc.sendRawTransaction(rawHex)
+console.log('https://sepolia.etherscan.io/tx/' + txHash)
+```
+
+That's the full pipeline. Open the Etherscan link to see your Sepolia tx,
+signed by an address whose private key has never existed on any disk.
+
+## Putting it together
+
+The full reference implementation lives in
+[`apps/demo/src/demo.ts`](https://github.com/JingYuan0926/frontier/blob/main/apps/demo/src/demo.ts).
+It wires steps 1-6 into a single command and prints both the Etherscan
+link and the matching Solscan links for the request / finalize Solana
+transactions.
+
+For the production-shape pipeline (independent signer daemon + relayer),
+see [`apps/relayer/src/index.ts`](https://github.com/JingYuan0926/frontier/blob/main/apps/relayer/src/index.ts) — same SDK, different orchestration.
+
+## Common errors
+
+| Error | Cause | Fix |
+| --- | --- | --- |
+| `insufficient funds for gas * price + value` | Derived address has no Sepolia ETH | Send a few cents from a faucet to the address from Step 2 |
+| `nonce too low` | Two processes raced and both broadcast | Idempotent: the other process won, just re-read state |
+| `AlreadyCompleted` (Solana custom error 0x1770) | Some other client already finalized | Treat as success, read the on-chain `SigRequest` |
+| `SignatureMismatch` (0x1771) | The committee returned a sig that recovers to a different key | The caller's `foreign_pk_xy` was wrong — re-derive using `deriveForeignPk` |
+
+## Next steps
+
+- [Concepts → Derivation](/concepts/derivation) — what the math is doing.
+- [Concepts → Verification](/concepts/verification) — what the on-chain
+  program actually checks.
+- [Reference → @soda-sdk/core](/reference/soda-sdk) — every export, with types.

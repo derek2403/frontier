@@ -1,0 +1,96 @@
+---
+title: On-chain verification
+---
+
+import { Callout } from 'nextra/components'
+
+# On-chain verification
+
+The `soda` program never holds a private key, never runs ECDSA, and never
+imports `k256`. All it does is compare a recovered public key against the
+one stored in the `SigRequest` PDA. The whole verification fits inside one
+syscall.
+
+## The syscall
+
+Solana exposes `secp256k1_recover(message_hash, recovery_id, signature)` as
+a native runtime syscall. Given a 32-byte message hash, a 0/1 recovery id,
+and a 64-byte `(r, s)` signature, it returns the 64-byte uncompressed
+public key (`X || Y`) that produced the signature.
+
+```rust
+use solana_program::secp256k1_recover::secp256k1_recover;
+
+let recovered = secp256k1_recover(
+    &sig_request.payload,        // 32-byte hash
+    recovery_id,                 // 0 or 1
+    &signature,                  // 64-byte r || s
+)?;
+
+require_keys_eq!(
+    recovered.to_bytes(),
+    sig_request.foreign_pk_xy,
+    SodaError::SignatureMismatch
+);
+```
+
+That `require_keys_eq!` is the entire correctness check. If the recovered
+public key matches the one the request was created with, the signature is
+genuine and was produced by the holder of the corresponding secret key.
+
+The syscall costs roughly 25,000 compute units, which is well under the
+default 200 K CU instruction budget.
+
+## Why this is enough
+
+ECDSA's `recover` operation is a pure cryptographic identity. Either:
+
+1. The signature is valid for `(payload, foreign_pk)`, in which case the
+   recovered key equals `foreign_pk` exactly.
+2. The signature is invalid, in which case the recovered key is some other
+   point on the curve (or the syscall errors).
+
+There is no third case. So a successful match is equivalent to "the signer
+held the secret key for `foreign_pk`."
+
+## What gets stored
+
+The `SigRequest` PDA stores the data needed to verify finalization later:
+
+| Field | Purpose |
+| --- | --- |
+| `foreign_pk_xy: [u8; 64]` | Expected public key (X \|\| Y), passed in by the caller |
+| `payload: [u8; 32]` | Hash to be signed (e.g., `keccak256(rlp_unsigned)`) |
+| `seeds: Vec<u8>` | Caller-supplied derivation seeds (echoed back for audit) |
+| `chain_tag: u8` | Foreign-chain selector |
+| `signature: [u8; 64]` | Filled in by `finalize_signature` |
+| `recovery_id: u8` | Filled in by `finalize_signature` |
+| `status: SigStatus` | `Pending` → `Completed` |
+
+<Callout type="info">
+  EIP-155 `v` is **not** stored on-chain. It is computed by the broadcasting
+  client (relayer or demo CLI) from `recovery_id` and the chain id at
+  assembly time. `soda` only sees the recovery id (0 or 1).
+</Callout>
+
+## Idempotency and replay
+
+`SigRequest` PDAs are derived from `(caller_program, seeds)`, so two callers
+asking for the same signature converge on the same PDA. Once `status =
+Completed`, `finalize_signature` returns custom error `0x1770`
+(`AlreadyCompleted`). All off-chain components (signer daemon, relayer,
+demo CLI) treat this error as success.
+
+In v0 there is no nonce, no expiry, and no per-request randomness. A caller
+that wants distinct signatures for distinct payloads must include
+distinguishing data in `seeds`.
+
+## What the `soda` program never does
+
+- It never imports `k256`, `ark-secp256k1`, or any heavy curve crate.
+- It never multiplies points (no `tweak · G`, no `group_sk · G`).
+- It never aggregates partial signatures.
+- It never enforces who is allowed to call `finalize_signature` with the
+  correct signature. Anyone with a valid `(sig, recovery_id)` for a pending
+  request can finalize it. (This is by design: the cryptographic proof is
+  self-contained, so finalization is permissionless.)

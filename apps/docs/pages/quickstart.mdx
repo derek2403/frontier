@@ -1,0 +1,145 @@
+---
+title: Quickstart
+---
+
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Quickstart
+
+Run the SODA v0 demo end-to-end: a Solana program signs a real Sepolia
+transaction. The whole flow takes about 10 seconds once funds are in place.
+
+<Callout type="info">
+  **Just want to use the SDK in your own project?** You don't need to clone
+  this repo. Run `pnpm add @soda-sdk/core` and follow the
+  [Sign an Ethereum tx](/guides/sign-an-eth-tx) guide. This page is for the
+  full local demo (validator + Anchor build + signer daemon).
+</Callout>
+
+<Callout type="info">
+  v0 ships with a single dev signing key (no real t-of-n committee yet). That
+  key persists across runs, so the derived ETH address is stable: fund it once
+  on Sepolia, demo many times.
+</Callout>
+
+## Prerequisites
+
+- WSL (Ubuntu) or Linux.
+- Rust 1.95+, Solana CLI 3.1+, Anchor 0.32.1, Node 24+, pnpm 10+.
+- A Solana keypair at `~/.config/solana/id.json`.
+- A `.env` file at the repo root with `SEPOLIA_RPC_URL=...` (Alchemy / Infura).
+
+## Setup
+
+<Steps>
+
+### Clone and install
+
+```bash
+git clone https://github.com/JingYuan0926/frontier
+cd frontier
+pnpm install
+```
+
+### Set up .env
+
+```bash
+cat > .env <<EOF
+SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+SOLANA_DEVNET_RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY
+EOF
+```
+
+### Fund the derived address
+
+The first time you run the demo, it prints the derived Sepolia address (stable
+across runs as long as `keyshare.dev.json` exists). Send around `0.001 ETH` of
+Sepolia testnet ETH to that address from a faucet.
+
+</Steps>
+
+## Run the demo
+
+<Tabs items={['CLI (canonical)', 'Web UI', 'Three-terminal architecture']}>
+  <Tabs.Tab>
+
+The CLI is the canonical demo path.
+
+```bash
+./demo.sh
+```
+
+Defaults to Solana devnet and a self-transfer of 0.0001 ETH on Sepolia. After a
+successful broadcast, `demo.sh` automatically runs `pnpm verify <hash>`, which
+prints the cryptographic audit trail (six checks tying the Solana `SigRequest`
+PDA to the broadcast Sepolia transaction).
+
+```bash
+DEMO_RECIPIENT=0xSomeAddress ./demo.sh   # send to a specific recipient
+SODA_DRY_RUN=1 ./demo.sh                 # skip Sepolia, verify on-chain only
+SOLANA_CLUSTER=local ./demo.sh           # against a local validator
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+pnpm --filter web dev
+# open http://localhost:3000
+```
+
+The page auto-derives the ETH address, polls Sepolia balance, and runs the
+pipeline server-side via `/api/run` (an SSE stream of pipeline events). The
+five-step timeline animates as events arrive.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+To show the full production-shape architecture (each piece communicating via
+on-chain events only, no shared in-process state), open three terminals:
+
+```bash
+# Terminal 1 — Rust signer daemon (Tokio + k256)
+pnpm signer
+
+# Terminal 2 — Node relayer (events → broadcast)
+pnpm relayer:dev
+
+# Terminal 3 — kick it off
+./demo.sh
+```
+
+Each process logs its own work; all three independently arrive at the same
+on-chain `finalize_signature` and the same Sepolia transaction hash.
+
+  </Tabs.Tab>
+</Tabs>
+
+## What you should see
+
+1. The CLI prints the derived ETH address and waits for funding (skipped if
+   already funded).
+2. A `SigRequested` event fires on Solana devnet. Visible on Solscan.
+3. The signer signs the payload off-chain with `k256`.
+4. A `finalize_signature` instruction runs `secp256k1_recover` on-chain and
+   stores the signature.
+5. The signed RLP is broadcast to Sepolia. Etherscan link is printed.
+6. `pnpm verify <hash>` runs automatically and prints the six audit checks.
+
+## Verifying any past run
+
+```bash
+pnpm verify 0x<sepolia_tx_hash>
+```
+
+Reads only public state. Re-derives the ETH address from the on-chain
+`SigRequest` PDA and confirms the broadcast `from` address matches.
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `insufficient funds` | Fund the derived address from a Sepolia faucet. |
+| `AlreadyCompleted` (custom error 0x1770) | Idempotent: another process (relayer / daemon) already signed. Safe to ignore. |
+| Anchor build fails on BPF stack | You enabled on-chain `ProjectivePoint` ops. v0 keeps derivation off-chain. |
+| Web UI shows blank balance | Set `SEPOLIA_RPC_URL` in `apps/web/.env.local` (mirrors repo-root `.env`). |
