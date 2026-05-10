@@ -23,13 +23,23 @@
  */
 
 import Fastify from 'fastify'
-import { request } from 'undici'
+import { Agent, request } from 'undici'
 import { randomUUID } from 'node:crypto'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 
 const NODE_P1_URL = process.env.MPC_NODE_P1_URL ?? 'http://localhost:8001'
 const NODE_P2_URL = process.env.MPC_NODE_P2_URL ?? 'http://localhost:8002'
 const PORT = Number(process.env.PORT ?? 8000)
+
+// Connect / response timeouts. Localhost is fast; tunneled / cross-region
+// peers can cold-start. Bump from undici defaults (10s connect, 30s headers)
+// so the first-after-idle request doesn't fail before the peer answers.
+const PEER_HTTP_TIMEOUT_MS = Number(process.env.MPC_PEER_TIMEOUT_MS ?? 60_000)
+const peerAgent = new Agent({
+  connect: { timeout: PEER_HTTP_TIMEOUT_MS },
+  bodyTimeout: PEER_HTTP_TIMEOUT_MS,
+  headersTimeout: PEER_HTTP_TIMEOUT_MS,
+})
 
 const app = Fastify({ logger: { level: 'info' } })
 
@@ -113,7 +123,7 @@ await app.listen({ host: '0.0.0.0', port: PORT })
 app.log.info({ port: PORT, p1: NODE_P1_URL, p2: NODE_P2_URL }, 'mpc-coordinator ready')
 
 async function fetchJson(url: string): Promise<any> {
-  const res = await request(url, { method: 'GET' })
+  const res = await request(url, { method: 'GET', dispatcher: peerAgent })
   return res.body.json()
 }
 
@@ -122,6 +132,7 @@ async function postJson(url: string, body: unknown): Promise<any> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    dispatcher: peerAgent,
   })
   if (res.statusCode >= 400) {
     const text = await res.body.text()
