@@ -210,6 +210,50 @@ console.log('https://sepolia.etherscan.io/tx/' + txHash)
   to: Uint8Array(20), valueWeiBe: Uint8Array, data: Uint8Array, chainId: bigint }
 ```
 
+## Two committee modes (v0 vs v0.5)
+
+SODA ships two off-chain signer implementations. Pick whichever suits the
+user's needs — the on-chain program treats both identically.
+
+**v0 — single-key signer.** One Rust daemon (`pnpm signer`) with a 32-byte
+k256 secret in `keyshare.dev.json`. Simplest path; what `./demo.sh` uses
+by default. Fine for hackathon-style throwaway demos. Trust assumption:
+the dev key on disk is honest.
+
+**v0.5 — Lindell '17 2-of-2 MPC ECDSA (shipped 2026-05-11).** Real
+threshold ECDSA across two `apps/mpc-node` services. Neither node sees
+`group_sk`. To run:
+
+```bash
+pnpm mpc:dkg                  # once: distributed key generation
+pnpm mpc:up                   # docker compose: 2 nodes + coordinator
+pnpm mpc:update-committee     # once: swap on-chain group_pk
+pnpm mpc:subscribe            # subscriber loop replaces `pnpm signer`
+./demo.sh                     # signing now goes through MPC
+```
+
+The architecture:
+
+```
+caller program → SigRequested → mpc-subscriber
+                                     │ POST /sign
+                                     ▼
+                       mpc-coordinator (drives 4-msg protocol)
+                              /                 \
+                             ▼                   ▼
+                   mpc-node-p1            mpc-node-p2
+                   (holds x1)             (holds x2)
+                              \                 /
+                               r,s,v ← combined sig
+                                     │
+                                     ▼
+                       soda::finalize_signature  (no on-chain change)
+```
+
+Choose v0.5 when explaining the trust model to the user. The on-chain
+program does NOT change — same `secp256k1_recover` syscall verifies
+both v0 and v0.5 signatures.
+
 ## Common errors
 
 | Error | Cause | Fix |
