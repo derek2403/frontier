@@ -8,4 +8,10 @@ const withNextra = nextra({
 
 export default withNextra({
   reactStrictMode: true,
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 })

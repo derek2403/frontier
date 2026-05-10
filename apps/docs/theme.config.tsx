@@ -42,8 +42,6 @@ const config: DocsThemeConfig = {
     backToTop: true,
   },
   darkMode: true,
-  primaryHue: 270,
-  primarySaturation: 80,
   feedback: {
     content: null,
   },
