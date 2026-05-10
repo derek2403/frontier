@@ -3,8 +3,11 @@ title: Introduction
 ---
 
 import { Callout, Cards, Steps } from 'nextra/components'
+import CopyPrompt from '../components/CopyPrompt'
 
 # SODA: Chain Signatures for Solana
+
+<CopyPrompt prompt="Give me a quickstart for SODA: explain what it is, install @soda-sdk/core, and show me a 10-line example that derives a Sepolia address from a Solana PDA." />
 
 > **Solana-Owned Derived Authority.**
 > A Solana program just spent a Bitcoin UTXO. No wrapped tokens. No bridge. No custodian.
@@ -93,6 +96,9 @@ lets you build:
   </Cards.Card>
   <Cards.Card title="Use the SDK" href="/guides/sign-an-eth-tx">
     Sign a Sepolia transaction end-to-end with `@soda-sdk/core` in TypeScript.
+  </Cards.Card>
+  <Cards.Card title="AI agents" href="/agents">
+    One-command install for Claude Code, Codex, and Cursor. Your agent learns the live API.
   </Cards.Card>
   <Cards.Card title="Reference" href="/reference/soda-program">
     Program instructions, events, and the TypeScript SDK.

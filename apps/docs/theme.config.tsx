@@ -1,12 +1,25 @@
 import React from 'react'
 import { DocsThemeConfig, useConfig } from 'nextra-theme-docs'
+import { ClaudeIcon, ChatGPTIcon } from './components/icons'
 
 const config: DocsThemeConfig = {
   logo: (
-    <span style={{ fontWeight: 700, letterSpacing: '0.04em' }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, letterSpacing: '0.04em' }}>
+      <img src="/logo.png" alt="SODA" width={28} height={28} style={{ borderRadius: 6 }} />
       SODA <span style={{ opacity: 0.6, fontWeight: 400 }}>docs</span>
     </span>
   ),
+  banner: {
+    key: 'soda-skill-2026-05',
+    dismissible: true,
+    content: (
+      <a href="/agents" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+        <ClaudeIcon size={16} />
+        <ChatGPTIcon size={16} />
+        <strong>New:</strong> Install the SODA skill into Claude Code, Codex, or Cursor in one command →
+      </a>
+    ),
+  },
   project: {
     link: 'https://github.com/JingYuan0926/frontier',
   },

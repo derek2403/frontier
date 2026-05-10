@@ -14,4 +14,5 @@ export default withNextra({
   eslint: {
     ignoreDuringBuilds: true,
   },
+  devIndicators: false,
 })

@@ -13,3 +13,37 @@
 .nextra-card > span:last-child {
   padding-top: 0.5rem;
 }
+
+/* "Copy as AI prompt" button: tries to feel like a Solana-Pay-style action,
+   not a Tailwind blob. Lives just under the page H1 on relevant pages. */
+.soda-copy-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(55 65 81);
+  background: rgb(243 244 246);
+  border: 1px solid rgb(229 231 235);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.soda-copy-prompt:hover {
+  background: rgb(229 231 235);
+  border-color: rgb(209 213 219);
+}
+.soda-copy-prompt:active {
+  transform: translateY(1px);
+}
+.dark .soda-copy-prompt {
+  color: rgb(229 231 235);
+  background: rgb(38 38 38);
+  border-color: rgb(64 64 64);
+}
+.dark .soda-copy-prompt:hover {
+  background: rgb(64 64 64);
+  border-color: rgb(82 82 82);
+}
