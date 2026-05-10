@@ -1,0 +1,21 @@
+{
+  "name": "mpc-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SODA MPC coordinator — drives the 4-message Lindell '17 protocol between two mpc-node peers and emits a final ECDSA signature.",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.0",
+    "fastify": "^5.0.0",
+    "undici": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
