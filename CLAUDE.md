@@ -9,7 +9,40 @@ The repo is at `~/code/frontier` (WSL native path). Anchor/Cargo work happens
 inside `contracts/`. TS lives at the repo root via pnpm workspace
 (`apps/*`, `packages/*`).
 
-## Status (2026-05-06) — Phase 1 complete
+## Status (2026-05-11) — Phase 1 complete + MPC v0.5 in flight
+
+### v0.5 (2026-05-11): real Lindell '17 2-of-2 MPC ECDSA
+
+Replaced the v0 single-key signer with a real threshold-ECDSA committee.
+Neither node ever sees the joint secret — DKG produces additive Paillier-
+shared key material, and signing runs the 4-message Lindell '17 protocol
+between two `mpc-node` peers, orchestrated by an `mpc-coordinator` that
+only forwards opaque protocol bytes.
+
+| Component | Path | Run | What it does |
+|---|---|---|---|
+| **mpc-node** | `apps/mpc-node/` | `MPC_ROLE=p1\|p2 pnpm dev` | Fastify HTTP service. Holds one share. POST /sign/init (P1 only) and POST /sign/step run the 4-message protocol. Optional `tweakHex` adds the SODA derivation tweak to P1's `x1` so the resulting sig recovers to `group_pk + tweak·G` (a SODA-derived foreign address). |
+| **DKG ceremony** | `apps/mpc-node/scripts/dkg.ts` | `pnpm mpc:dkg` | Runs both contexts in-process and writes `share-p1.json` + `share-p2.json` to `apps/mpc-node/shares/` (gitignored). Outputs the joint `group_pk.x` / `group_pk.y` for the on-chain Committee. |
+| **mpc-coordinator** | `apps/mpc-coordinator/` | `pnpm dev` (port 8000) | Stateless orchestration. POST /sign { payloadHex, tweakHex? } drives the 4 messages between P1 and P2, applies low-s normalization, returns `{ r, s, v }`. |
+| **mpc-subscriber** | `apps/mpc-subscriber/` | `pnpm mpc:subscribe` | Subscribes to `SigRequested` on Solana, computes the tweak, calls coordinator, submits `finalize_signature`. Replaces `contracts/signer/` for MPC mode. |
+| **update_committee ix** | `contracts/programs/soda/src/instructions/update_committee.rs` | `pnpm mpc:update-committee` | Authority-gated swap of on-chain `group_pk` so we can migrate from the v0 single key without redeploying. |
+| **Docker stack** | `docker-compose.mpc.yml` | `pnpm mpc:up` | Three containers (p1, p2, coordinator) with healthchecks; mounts `apps/mpc-node/shares/` read-only. Foundation for AWS deploy. |
+| **AWS deploy doc** | `apps/docs/pages/deploy/aws-mpc.mdx` | — | Step-by-step deploy of two `mpc-node` instances in different regions plus a coordinator. Honest about 2-of-2 caveats. |
+
+Verified locally: DKG ceremony produces shares; both nodes report the same
+`group_pk` on `/health`; coordinator's `/sign` produces signatures that
+`@noble/curves` `verify(sig, payload, group_pk)` returns `true` for. Docker
+build is the next-but-unbuilt step.
+
+**v0.5 trust caveats (see `/concepts/committee` and `/deploy/aws-mpc`):**
+- 2-of-2 means ZERO fault tolerance. v1 needs 2-of-3 minimum.
+- Shares ship as plaintext JSON. Production wants Nitro Enclave / KMS wrap.
+- Same person controls both nodes. Real decentralization needs different
+  operators + restaking-bonded committee.
+
+### v0 (2026-05-06): Phase 1 components that still work
+
+
 
 ### Components that work right now
 
@@ -63,9 +96,12 @@ no shared in-process state.
 
 These are intentional simplifications for the hackathon — see "The legit
 flow" below for the production-shape design:
-- **Single dev k256 signer** (`keyshare.dev.json`), not a real FROST
-  t-of-n committee. The signer daemon today is one Rust process holding
-  one secret key.
+- **Single dev k256 signer** (`keyshare.dev.json`) is the v0 path.
+  v0.5 (2026-05-11) replaced this with real Lindell '17 2-of-2 MPC ECDSA
+  via `apps/mpc-node` + `apps/mpc-coordinator`. Both modes coexist; pick
+  one at demo time. v1 still wants 2-of-3+ with restaking-bonded
+  operators (FROST is Schnorr-only, so threshold ECDSA stays in the
+  GG18 / GG20 / CGG21 family).
 - **`foreign_pk = group_pk + tweak·G` is computed off-chain by the caller**
   and passed in to `soda::request_signature`. The on-chain program just
   compares `secp256k1_recover(payload, sig, recovery_id)` to the stored
@@ -129,20 +165,26 @@ options to revisit:
 - Verify via a zk proof (alt-bn128 syscalls already available; secp256k1
   via custom circuit).
 
-### 2. Real FROST t-of-n committee (vs single dev signer)
-Today: `keyshare.dev.json` is a 32-byte k256 secret on disk. One signer.
-Production:
-- `Committee` PDA stores group public key + per-signer share-commitment list.
-- `init_committee` sets threshold (t) and signer set.
-- A `request_signature` emits `SigRequested`; each committee signer runs a
-  daemon, produces a partial signature (FROST round 1 + 2), submits a
-  `SigShare` PDA.
-- Once t shares present, anyone calls `aggregate_finalize`; the program
-  runs FROST aggregation (likely off-chain optimization: aggregator submits
-  the combined sig, on-chain verifies via `secp256k1_recover` + the
-  group_pk, same as today).
-- Slashing on misbehavior via the restaking layer (Symbiotic / Solayer).
-  Out of scope for v1.
+### 2. Real threshold-ECDSA committee (vs single dev signer)
+
+**v0.5 (2026-05-11): partly done.** Real Lindell '17 2-of-2 ECDSA via
+`@safeheron/two-party-ecdsa-js`. Two `apps/mpc-node` processes hold
+shares (`x1` + `x2` such that `x1 + x2 = group_sk`); neither sees the
+joint secret. Sign runs the 4-message protocol; output `(r, s, v)` is
+a normal ECDSA signature that `secp256k1_recover` verifies on-chain
+identically to v0. Tweak handling: P1 adds the SODA tweak to its share
+before signing, so the resulting sig recovers to `group_pk + tweak·G`
+(the SODA-derived foreign address) without changing the protocol.
+
+**Still TODO for v1:**
+- 2-of-3+ instead of 2-of-2. Lindell '17 doesn't generalize; we'd swap
+  to GG18 / GG20 / CGG21 (Rust `multi-party-ecdsa` or `cggmp24`). FROST
+  is Schnorr-only, so it doesn't apply for ECDSA.
+- Different operators per node + bonding via restaking (Solayer / Jito).
+  Today both nodes are containers under the same operator.
+- Nitro-Enclave / KMS-wrapped shares at rest. Today shares are
+  plaintext JSON.
+- Slashing on misbehavior via on-chain proofs.
 
 ### 3. Signer daemon (Rust binary at `contracts/signer/`)
 **Done.** Tokio binary at `contracts/signer/src/{main,config,derive,event,ix}.rs`
