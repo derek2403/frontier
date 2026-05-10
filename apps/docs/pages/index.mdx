@@ -32,12 +32,20 @@ soda::request_signature(
 </Callout>
 
 <Callout type="warning">
-  **Do not put real funds on a SODA-derived address.** v0 is hackathon-grade:
-  the signing committee is a single dev key on disk (no t-of-n, no slashing,
-  no rotation). Anyone with that key can sign for any derived address on any
-  chain. Use Sepolia / devnet only with throwaway amounts. The full v1 trust
-  model (MPC threshold ECDSA + restaking) is deferred — see
-  [Concepts → Signing committee](/concepts/committee).
+  **Do not put real funds on a SODA-derived address.** Even in v0.5, the
+  signing committee is two nodes both controlled by the same operator and
+  shares ship as plaintext JSON. Use Sepolia / devnet only with throwaway
+  amounts. The full v1 trust model (t-of-n MPC + restaking-bonded
+  operators) is deferred — see [Concepts → Signing committee](/concepts/committee).
+</Callout>
+
+<Callout type="default">
+  **New in v0.5 (2026-05-11):** real Lindell '17 2-of-2 MPC ECDSA. Two
+  off-chain nodes hold additive shares; neither sees the joint secret;
+  signing runs the 4-message protocol and produces a normal ECDSA sig
+  that the on-chain `secp256k1_recover` verifies unchanged. See
+  [Architecture](/architecture#v05-real-lindell-17-2-of-2-mpc-ecdsa) and
+  [Deploy → AWS MPC](/deploy/aws-mpc).
 </Callout>
 
 ## Install the SDK

@@ -78,6 +78,34 @@ finalized. Off-chain components treat this as success.
 | `sig_request` | PDA, mut | |
 | `payer` | Signer, mut | |
 
+### `update_committee`
+
+```rust
+pub fn update_committee(
+    ctx: Context<UpdateCommittee>,
+    new_group_pk: [u8; 33],
+    new_signer_count: u8,
+) -> Result<()>
+```
+
+Authority-gated swap of the committee's `group_pk` (and `signer_count`).
+Used to migrate from the v0 single-key signer to the v0.5 MPC committee's
+joint public key without redeploying the program.
+
+The ix is locked to `committee.authority` (set at `init_committee` time)
+via Anchor's `has_one = authority`, so no one but the original initializer
+can change the group key. The on-chain layout doesn't change — `group_pk`
+stays compressed (33 bytes), `signer_count` becomes whatever you pass
+(e.g. `2` for 2-of-2 Lindell '17, `3` for 2-of-3 GG18).
+
+| Account | Type | Notes |
+| --- | --- | --- |
+| `committee` | PDA, mut | Seeds: `[b"committee"]`, `has_one = authority` |
+| `authority` | Signer | Must match `committee.authority` |
+
+Used by `pnpm mpc:update-committee` after a fresh DKG ceremony — see
+[Concepts → Committee](/concepts/committee#v05--lindell-17-2-of-2-mpc-ecdsa-shipped-2026-05-11).
+
 ## Events
 
 ### `SigRequested`

@@ -68,7 +68,7 @@ Sepolia testnet ETH to that address from a faucet.
 
 ## Run the demo
 
-<Tabs items={['CLI (canonical)', 'Web UI', 'Three-terminal architecture']}>
+<Tabs items={['CLI (canonical)', 'Web UI', 'Three-terminal architecture', 'MPC mode (v0.5)']}>
   <Tabs.Tab>
 
 The CLI is the canonical demo path.
@@ -119,6 +119,35 @@ pnpm relayer:dev
 
 Each process logs its own work; all three independently arrive at the same
 on-chain `finalize_signature` and the same Sepolia transaction hash.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Replaces the v0 single-key Rust signer with a real Lindell '17 2-of-2
+MPC committee. The on-chain program doesn't change — only the off-chain
+signer.
+
+```bash
+# 1. Once: distributed key generation (writes shares to apps/mpc-node/shares/)
+pnpm mpc:dkg
+
+# 2. Boot the MPC stack (3 containers: p1, p2, coordinator)
+pnpm mpc:up
+
+# 3. Once: migrate the on-chain group_pk from v0 → v0.5 joint key
+#    Requires `anchor build && anchor deploy` first so the new
+#    update_committee ix is on devnet.
+pnpm mpc:update-committee
+
+# 4. Run the subscriber that wires SigRequested → MPC sign → finalize
+pnpm mpc:subscribe
+
+# 5. Run the demo as usual; signing now goes through MPC
+./demo.sh
+```
+
+For the full deploy walkthrough (two EC2 hosts in different regions
+plus a coordinator), see [Deploy → AWS MPC](/deploy/aws-mpc).
 
   </Tabs.Tab>
 </Tabs>
