@@ -11,7 +11,7 @@ import {
   ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
-} from "soda-sdk";
+} from "@soda-sdk/core";
 import { ETH_DEMO_PROGRAM_ID, SODA_PROGRAM_ID } from "@/lib/idls";
 
 const INITIAL_TIMELINE: TimelineState = {

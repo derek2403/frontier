@@ -26,7 +26,7 @@ import {
   ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
-} from "soda-sdk";
+} from "@soda-sdk/core";
 import { ethDemoIdl, sodaIdl } from "./idls";
 
 const REPO_ROOT = resolve(process.cwd(), "../..");

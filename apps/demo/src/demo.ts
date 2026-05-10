@@ -31,7 +31,7 @@ import {
   ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
-} from "soda-sdk";
+} from "@soda-sdk/core";
 
 const sepolia = new EthRpc(
   process.env.SEPOLIA_RPC_URL ?? "https://rpc.sepolia.org",

@@ -13,7 +13,7 @@
     "@noble/hashes": "^1.5.0",
     "@solana/web3.js": "^1.95.0",
     "bn.js": "^5.2.1",
-    "soda-sdk": "workspace:*"
+    "@soda-sdk/core": "workspace:*"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.6",

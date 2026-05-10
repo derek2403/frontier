@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter web dev",
-    "build": "pnpm anchor:build && pnpm --filter soda-sdk build && pnpm --filter relayer build && pnpm --filter web build",
+    "docs:dev": "pnpm --filter docs dev",
+    "docs:build": "pnpm --filter docs build",
+    "build": "pnpm anchor:build && pnpm --filter @soda-sdk/core build && pnpm --filter relayer build && pnpm --filter web build",
     "test": "pnpm anchor:test",
     "anchor:build": "cd contracts && anchor build",
     "anchor:test": "cd contracts && anchor test",
@@ -14,8 +16,8 @@
     "relayer:dev": "pnpm --filter relayer dev",
     "demo": "pnpm --filter demo demo",
     "verify": "pnpm --filter demo verify",
-    "sdk:test": "pnpm --filter soda-sdk test",
-    "demo:test": "pnpm --filter soda-sdk test"
+    "sdk:test": "pnpm --filter @soda-sdk/core test",
+    "demo:test": "pnpm --filter @soda-sdk/core test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

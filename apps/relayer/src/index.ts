@@ -31,7 +31,7 @@ import {
   eip155V,
   encodeSignedLegacy,
   EthRpc,
-} from "soda-sdk";
+} from "@soda-sdk/core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

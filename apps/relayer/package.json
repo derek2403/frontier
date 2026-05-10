@@ -11,7 +11,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@solana/web3.js": "^1.95.0",
-    "soda-sdk": "workspace:*"
+    "@soda-sdk/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
