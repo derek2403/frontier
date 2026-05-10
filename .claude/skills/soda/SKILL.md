@@ -1,9 +1,9 @@
 ---
-description: Use this when the user wants to sign external-chain (Ethereum, Bitcoin, any ECDSA chain) transactions from a Solana program — i.e. build cross-chain dApps where a Solana PDA controls a foreign-chain address. Triggers on phrases like "use SODA", "@soda-sdk/core", "chain signatures from Solana", "Solana program signs an Ethereum tx", or "Solana PDA controls a Bitcoin UTXO".
+description: Use this when the user wants a Solana program to sign external-chain (Ethereum, Bitcoin, any ECDSA chain) transactions via SODA (Solana-Owned Derived Authority) — i.e. build cross-chain dApps where a Solana PDA controls a foreign-chain address. Triggers on phrases like "use SODA", "@soda-sdk/core", "Solana-Owned Derived Authority", "Solana program signs an Ethereum tx", or "Solana PDA controls a Bitcoin UTXO".
 allowed-tools: Bash(pnpm *), Bash(npm *), Bash(yarn *)
 ---
 
-# SODA: Chain signatures for Solana
+# SODA: Solana-Owned Derived Authority
 
 SODA gives any Solana program a CPI primitive that returns a valid `secp256k1` signature for Bitcoin, Ethereum, or any ECDSA chain. The foreign-chain address is deterministically derived from the caller's `(program_id, seeds)` — so a Solana PDA literally owns the foreign address. No wrapped tokens, no bridge, no custodian.
 

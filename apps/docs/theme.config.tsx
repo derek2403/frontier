@@ -36,7 +36,7 @@ const config: DocsThemeConfig = {
     const pageTitle = frontMatter.title ? `SODA Docs · ${frontMatter.title}` : 'SODA Docs'
     const description =
       frontMatter.description ||
-      'Chain Signatures for Solana. A primitive for programs to control native external-chain assets.'
+      'SODA — Solana-Owned Derived Authority. A primitive that lets Solana programs control native external-chain assets.'
     return (
       <>
         <title>{pageTitle}</title>
