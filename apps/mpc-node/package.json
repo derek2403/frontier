@@ -1,0 +1,25 @@
+{
+  "name": "mpc-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SODA MPC signer node — runs Lindell '17 2-of-2 ECDSA. Two of these (role=p1, role=p2) replace the v0 single-key signer.",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
+    "dkg": "tsx scripts/dkg.ts"
+  },
+  "dependencies": {
+    "@safeheron/two-party-ecdsa-js": "^1.0.1",
+    "@noble/curves": "^2.0.0",
+    "@noble/hashes": "^2.0.0",
+    "bn.js": "^5.2.1",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.6",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
