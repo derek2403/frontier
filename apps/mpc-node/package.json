@@ -13,6 +13,7 @@
     "@safeheron/two-party-ecdsa-js": "^1.0.1",
     "@noble/curves": "^2.0.0",
     "@noble/hashes": "^2.0.0",
+    "@solana/web3.js": "^1.95.0",
     "bn.js": "^5.2.1",
     "fastify": "^5.0.0"
   },

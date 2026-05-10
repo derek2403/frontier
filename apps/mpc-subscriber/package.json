@@ -1,0 +1,23 @@
+{
+  "name": "mpc-subscriber",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SODA MPC subscriber — subscribes to SigRequested on Solana, drives the MPC coordinator, and submits finalize_signature with the resulting ECDSA signature.",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.0",
+    "@soda-sdk/core": "workspace:*",
+    "@noble/hashes": "^2.0.0",
+    "@noble/curves": "^2.0.0",
+    "undici": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
