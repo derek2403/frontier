@@ -8,6 +8,7 @@ export default {
   architecture: 'Architecture',
   concepts: 'Concepts',
   guides: 'Guides',
+  deploy: 'Deploy',
   reference: 'Reference',
   '-- links': {
     type: 'separator',

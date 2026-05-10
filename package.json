@@ -17,7 +17,10 @@
     "demo": "pnpm --filter demo demo",
     "verify": "pnpm --filter demo verify",
     "sdk:test": "pnpm --filter @soda-sdk/core test",
-    "demo:test": "pnpm --filter @soda-sdk/core test"
+    "demo:test": "pnpm --filter @soda-sdk/core test",
+    "mpc:dkg": "mkdir -p apps/mpc-node/shares && pnpm --filter mpc-node dkg apps/mpc-node/shares/share-p1.json apps/mpc-node/shares/share-p2.json",
+    "mpc:up": "docker compose -f docker-compose.mpc.yml up --build",
+    "mpc:down": "docker compose -f docker-compose.mpc.yml down"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

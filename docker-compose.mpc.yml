@@ -1,0 +1,77 @@
+# Local SODA MPC stack: two mpc-node peers + one mpc-coordinator.
+#
+# Before first run, generate shares once:
+#
+#   pnpm install
+#   mkdir -p apps/mpc-node/shares
+#   pnpm --filter mpc-node dkg \
+#     apps/mpc-node/shares/share-p1.json \
+#     apps/mpc-node/shares/share-p2.json
+#
+# Then:
+#
+#   docker compose -f docker-compose.mpc.yml up --build
+#
+# Health: curl http://localhost:8000/health
+# Sign  : curl -XPOST http://localhost:8000/sign \
+#           -H 'content-type: application/json' \
+#           -d '{"payloadHex": "<32-byte hex>"}'
+
+services:
+  mpc-node-p1:
+    build:
+      context: .
+      dockerfile: apps/mpc-node/Dockerfile
+    image: soda-mpc-node:latest
+    environment:
+      MPC_ROLE: p1
+      MPC_SHARE_PATH: /data/share-p1.json
+      PORT: 8001
+    volumes:
+      - ./apps/mpc-node/shares:/data:ro
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mpc-node-p2:
+    build:
+      context: .
+      dockerfile: apps/mpc-node/Dockerfile
+    image: soda-mpc-node:latest
+    environment:
+      MPC_ROLE: p2
+      MPC_SHARE_PATH: /data/share-p2.json
+      PORT: 8002
+    volumes:
+      - ./apps/mpc-node/shares:/data:ro
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mpc-coordinator:
+    build:
+      context: .
+      dockerfile: apps/mpc-coordinator/Dockerfile
+    image: soda-mpc-coordinator:latest
+    environment:
+      MPC_NODE_P1_URL: http://mpc-node-p1:8001
+      MPC_NODE_P2_URL: http://mpc-node-p2:8002
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      mpc-node-p1:
+        condition: service_healthy
+      mpc-node-p2:
+        condition: service_healthy
+    restart: unless-stopped

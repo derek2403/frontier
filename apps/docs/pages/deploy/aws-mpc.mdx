@@ -1,0 +1,222 @@
+---
+title: Deploy MPC committee to AWS
+description: Run the SODA 2-of-2 MPC committee on AWS — two EC2 hosts in different regions plus an orchestrator.
+---
+
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Deploy the MPC committee to AWS
+
+This walks through running the SODA v0.5 MPC stack on AWS — two
+`mpc-node` instances in different regions, plus a coordinator that drives
+the Lindell '17 protocol between them.
+
+<Callout type="info">
+  v0.5 = real 2-of-2 ECDSA threshold signing (no node ever sees the full
+  secret). v1 will move to 2-of-3 + restaking-bonded operators; the
+  on-chain `soda` program does not change.
+</Callout>
+
+<Callout type="warning">
+  2-of-2 has zero fault tolerance — both nodes must be up and reachable
+  to sign. For production you want 2-of-3+. Treat this as a deployable
+  proof of concept, not a production posture.
+</Callout>
+
+## Architecture
+
+```
+   client / web                               foreign chain
+       │                                            ▲
+       ▼                                            │
+   request_signature  (Anchor CPI, no change)       │
+       │                                            │
+       ▼                                            │
+   soda program  ── emits ──> SigRequested          │
+       │                                            │
+       ▼ (off-chain)                                │
+   ┌──────────────┐    HTTP    ┌────────────────┐  │
+   │ coordinator  │──────────▶ │ mpc-node-p1    │  │
+   │ (EC2, t3.s)  │            │ (us-east-1)    │  │
+   │              │◀────────── │ holds share P1 │  │
+   │              │            └────────────────┘  │
+   │              │    HTTP    ┌────────────────┐  │
+   │              │──────────▶ │ mpc-node-p2    │  │
+   │              │            │ (eu-west-1)    │  │
+   │              │◀────────── │ holds share P2 │  │
+   └──────┬───────┘            └────────────────┘  │
+          │                                         │
+          ▼                                         │
+   finalize_signature(sig, recovery_id)             │
+          │                                         │
+          ▼                                         │
+   secp256k1_recover (~25K CU)  ── relayer ─────────┘
+```
+
+## Prerequisites
+
+- AWS CLI configured.
+- Two SSH keypairs (or one, reused).
+- A domain name or just public IPs for the demo.
+- The repo cloned somewhere with `pnpm install` already run.
+
+## 1 — Run the DKG ceremony locally
+
+You only do this **once**. The output is two share files; one goes on
+each AWS host. After you ship them, **delete them from your local
+machine** so the orchestrator never has a local copy.
+
+```bash
+pnpm mpc:dkg
+# →  apps/mpc-node/shares/share-p1.json
+# →  apps/mpc-node/shares/share-p2.json
+# Also prints group_pk.x / group_pk.y for the on-chain Committee PDA.
+```
+
+<Callout type="warning">
+  The shares are unencrypted JSON. For production, run the DKG inside an
+  AWS Nitro Enclave or wrap each share with KMS before shipping. The
+  hackathon demo uses plaintext + scp.
+</Callout>
+
+## 2 — Provision two EC2 instances
+
+<Tabs items={['us-east-1', 'eu-west-1']}>
+  <Tabs.Tab>
+
+```bash
+aws ec2 run-instances \
+  --region us-east-1 \
+  --image-id ami-0c02fb55956c7d316 \
+  --instance-type t3.small \
+  --key-name your-key \
+  --security-group-ids sg-0xxx \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=soda-mpc-p1}]'
+```
+
+Open inbound TCP `8001` from the coordinator's IP only — never to
+`0.0.0.0/0`.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+aws ec2 run-instances \
+  --region eu-west-1 \
+  --image-id ami-093cb9fb2d34920ad \
+  --instance-type t3.small \
+  --key-name your-key \
+  --security-group-ids sg-0yyy \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=soda-mpc-p2}]'
+```
+
+Open inbound TCP `8002` from the coordinator's IP.
+
+  </Tabs.Tab>
+</Tabs>
+
+## 3 — Install Docker on each host
+
+```bash
+ssh ubuntu@<host-ip>
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin
+sudo usermod -aG docker $USER
+exit && ssh ubuntu@<host-ip>   # re-login so docker works without sudo
+```
+
+## 4 — Ship the share to its home host
+
+```bash
+# On your local machine:
+scp apps/mpc-node/shares/share-p1.json ubuntu@<p1-ip>:/home/ubuntu/share-p1.json
+scp apps/mpc-node/shares/share-p2.json ubuntu@<p2-ip>:/home/ubuntu/share-p2.json
+
+# Now wipe your local copies — the orchestrator must not retain them.
+shred -u apps/mpc-node/shares/share-p1.json
+shred -u apps/mpc-node/shares/share-p2.json
+```
+
+## 5 — Build and run each MPC node
+
+On each EC2 host:
+
+```bash
+git clone https://github.com/derek2403/frontier
+cd frontier
+mkdir -p apps/mpc-node/shares
+mv ~/share-p1.json apps/mpc-node/shares/share-p1.json   # or p2 on the other host
+
+docker build -f apps/mpc-node/Dockerfile -t soda-mpc-node .
+
+docker run -d --name soda-mpc-node \
+  --restart unless-stopped \
+  -e MPC_ROLE=p1 \
+  -e MPC_SHARE_PATH=/data/share-p1.json \
+  -e PORT=8001 \
+  -v "$(pwd)/apps/mpc-node/shares:/data:ro" \
+  -p 8001:8001 \
+  soda-mpc-node
+```
+
+Repeat on the second host with `MPC_ROLE=p2`, `MPC_SHARE_PATH=/data/share-p2.json`,
+and `PORT=8002`.
+
+## 6 — Run the coordinator
+
+The coordinator can live anywhere with network access to both nodes —
+typically a third small EC2 in a separate region, or wherever your
+`apps/relayer` already runs.
+
+```bash
+docker build -f apps/mpc-coordinator/Dockerfile -t soda-mpc-coordinator .
+
+docker run -d --name soda-mpc-coordinator \
+  --restart unless-stopped \
+  -e MPC_NODE_P1_URL=https://p1.your-domain.com:8001 \
+  -e MPC_NODE_P2_URL=https://p2.your-domain.com:8002 \
+  -e PORT=8000 \
+  -p 8000:8000 \
+  soda-mpc-coordinator
+```
+
+## 7 — Smoke test
+
+```bash
+# /health pings both nodes and reports the joint group public key
+curl https://coord.your-domain.com:8000/health
+
+# /sign drives the 4-message protocol and returns (r, s, v)
+curl -X POST https://coord.your-domain.com:8000/sign \
+  -H 'content-type: application/json' \
+  -d '{"payloadHex": "0000000000000000000000000000000000000000000000000000000000000001"}'
+```
+
+## What stays the same on Solana
+
+The on-chain `soda` program does **zero** changes. `secp256k1_recover`
+verifies the MPC-produced signature exactly like it verified the v0
+single-key signature — the math is the same secp256k1 ECDSA, just
+generated by two parties cooperating instead of one.
+
+The `Committee` PDA's `group_pk_xy` field is now whatever the DKG
+ceremony output. Re-init the committee once after deploying the new
+group key:
+
+```bash
+cd contracts
+anchor run init-committee -- --group-pk <hex from DKG>
+```
+
+## What's still hackathon-grade
+
+| Item | Today | Production target |
+| --- | --- | --- |
+| Threshold | 2-of-2 | 2-of-3 minimum |
+| Fault tolerance | Zero (both must be up) | Survives `n - t` losses |
+| Share at rest | Plaintext JSON | KMS-wrapped or Nitro Enclave |
+| Share in transit | scp during setup | Generated inside Nitro, never leaves |
+| Signer ops | Same person controls all | Different operators per node |
+| Bonding | None | Restaking via Solayer / Jito |
+| Slashing | None | Misbehavior provable from on-chain state |
+
+These are the v1 milestones funded by the grant Phase 2.
