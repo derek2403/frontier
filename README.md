@@ -1,4 +1,4 @@
-# SODA — Chain Signatures for Solana
+# SODA
 
 > **Solana-Owned Derived Authority.**
 > A Solana program just spent a Bitcoin UTXO.
