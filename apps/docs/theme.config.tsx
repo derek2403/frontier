@@ -33,17 +33,20 @@ const config: DocsThemeConfig = {
   },
   head: function Head() {
     const { frontMatter } = useConfig() as { frontMatter: { title?: string; description?: string } }
-    const pageTitle = frontMatter.title ? `${frontMatter.title} – SODA` : 'SODA Docs'
+    const pageTitle = frontMatter.title ? `SODA Docs · ${frontMatter.title}` : 'SODA Docs'
     const description =
       frontMatter.description ||
       'Chain Signatures for Solana. A primitive for programs to control native external-chain assets.'
     return (
       <>
         <title>{pageTitle}</title>
+        <link rel="icon" type="image/png" href="/logo.png" />
+        <link rel="apple-touch-icon" href="/logo.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta name="description" content={description} />
         <meta property="og:title" content={pageTitle} />
         <meta property="og:description" content={description} />
+        <meta property="og:image" content="/logo.png" />
       </>
     )
   },

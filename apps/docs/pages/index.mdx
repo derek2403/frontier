@@ -31,6 +31,15 @@ soda::request_signature(
   produce a real Sepolia transaction signed by a Solana program.
 </Callout>
 
+<Callout type="warning">
+  **Do not put real funds on a SODA-derived address.** v0 is hackathon-grade:
+  the signing committee is a single dev key on disk (no t-of-n, no slashing,
+  no rotation). Anyone with that key can sign for any derived address on any
+  chain. Use Sepolia / devnet only with throwaway amounts. The full v1 trust
+  model (MPC threshold ECDSA + restaking) is deferred — see
+  [Concepts → Signing committee](/concepts/committee).
+</Callout>
+
 ## Install the SDK
 
 The TypeScript SDK is published on npm as
