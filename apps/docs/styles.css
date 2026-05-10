@@ -15,13 +15,17 @@
 }
 
 /* "Copy as AI prompt" button: tries to feel like a Solana-Pay-style action,
-   not a Tailwind blob. Lives just under the page H1 on relevant pages. */
+   not a Tailwind blob. Lives just under the page H1 on relevant pages.
+   The wrap div keeps the button block-level inside MDX so it isn't
+   stuffed into a <p> (which would hydrate-mismatch). */
+.soda-copy-prompt-wrap {
+  margin-top: 1rem;
+}
 .soda-copy-prompt {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.875rem;
-  margin-top: 1rem;
   font-size: 0.875rem;
   font-weight: 500;
   color: rgb(55 65 81);

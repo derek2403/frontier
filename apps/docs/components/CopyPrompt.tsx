@@ -35,18 +35,22 @@ ${prompt}`
       })
   }
 
+  // Wrap in a block-level <div>: MDX otherwise puts the button inside a
+  // <p>, which the browser auto-unwraps -> hydration mismatch.
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="soda-copy-prompt"
-      aria-live="polite"
-    >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-        <ClaudeIcon size={14} />
-        <ChatGPTIcon size={14} />
-      </span>
-      <span>{copied ? 'Copied — paste into your AI' : label}</span>
-    </button>
+    <div className="soda-copy-prompt-wrap">
+      <button
+        type="button"
+        onClick={onClick}
+        className="soda-copy-prompt"
+        aria-live="polite"
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+          <ClaudeIcon size={14} />
+          <ChatGPTIcon size={14} />
+        </span>
+        <span>{copied ? 'Copied — paste into your AI' : label}</span>
+      </button>
+    </div>
   )
 }
