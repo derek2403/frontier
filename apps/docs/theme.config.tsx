@@ -8,6 +8,15 @@ const config: DocsThemeConfig = {
       SODA <span style={{ opacity: 0.6, fontWeight: 400 }}>docs</span>
     </span>
   ),
+  banner: {
+    key: 'soda-skill-2026-05',
+    dismissible: true,
+    content: (
+      <a href="/agents" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+        🤖 <strong>New:</strong> Install the SODA skill into Claude Code, Codex, or Cursor in one command →
+      </a>
+    ),
+  },
   project: {
     link: 'https://github.com/JingYuan0926/frontier',
   },

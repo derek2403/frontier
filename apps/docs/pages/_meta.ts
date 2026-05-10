@@ -4,10 +4,10 @@ export default {
     theme: { breadcrumb: false },
   },
   quickstart: 'Quickstart',
+  agents: '🤖 Use with AI',
   architecture: 'Architecture',
   concepts: 'Concepts',
   guides: 'Guides',
-  agents: 'AI agents',
   reference: 'Reference',
   '-- links': {
     type: 'separator',
