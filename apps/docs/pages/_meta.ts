@@ -17,7 +17,7 @@ export default {
   demo_link: {
     title: 'Try the live demo ↗',
     type: 'page',
-    href: process.env.NEXT_PUBLIC_DEMO_URL ?? 'https://soda-demo.vercel.app',
+    href: process.env.NEXT_PUBLIC_DEMO_URL ?? 'https://frontier-web-five.vercel.app',
     newWindow: true,
   },
   '-- links': {

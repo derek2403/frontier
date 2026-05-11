@@ -49,10 +49,15 @@ const INITIAL_TIMELINE: TimelineState = {
   broadcastEth: "idle",
 };
 
+// Public Sepolia RPC defaults — used when NEXT_PUBLIC_SEPOLIA_RPC_URL isn't
+// set (e.g. on Vercel before env vars are configured). PublicNode is free,
+// no API key, decent rate limits. `rpc.sepolia.org` (the previous default)
+// is unreliable and frequently rate-limits browser requests.
 const SEPOLIA_RPC =
-  process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ?? "https://rpc.sepolia.org";
+  process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
+  "https://ethereum-sepolia.publicnode.com";
 const SOLANA_RPC =
-  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "http://127.0.0.1:8899";
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
 
 function bytesToHex(b: Uint8Array): string {
   return "0x" + Array.from(b).map((n) => n.toString(16).padStart(2, "0")).join("");
@@ -113,8 +118,11 @@ export default function Home() {
       try {
         const b = await sepolia.getBalance(ethAddress);
         if (!cancelled) setBalance(b);
-      } catch {
-        /* swallow */
+      } catch (e) {
+        // Log instead of swallowing — a stuck "—" balance with no console
+        // signal makes Vercel misconfig invisible.
+        // eslint-disable-next-line no-console
+        console.warn("[soda] Sepolia balance fetch failed:", e);
       }
     };
     tick();
