@@ -38,6 +38,9 @@ const WalletMultiButton = dynamic(
 const MPC_COORDINATOR =
   process.env.NEXT_PUBLIC_MPC_COORDINATOR_URL ?? "http://32.198.7.34:8000";
 
+const DOCS_URL =
+  process.env.NEXT_PUBLIC_DOCS_URL ?? "https://frontier-docs-cazz.vercel.app";
+
 const INITIAL_TIMELINE: TimelineState = {
   signEthTransfer: "idle",
   sigRequested: "idle",
@@ -315,7 +318,17 @@ export default function Home() {
               Solana-Owned Derived Authority
             </div>
           </div>
-          <WalletMultiButton />
+          <div className="flex items-center gap-3">
+            <a
+              href={DOCS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            >
+              Docs ↗
+            </a>
+            <WalletMultiButton />
+          </div>
         </div>
       </header>
 
