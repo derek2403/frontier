@@ -1,14 +1,127 @@
 {
-  "address": "REPLACE_WITH_REAL_ETH_DEMO_PROGRAM_ID",
+  "address": "9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM",
   "metadata": {
     "name": "eth_demo",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "STUB IDL. Replace the contents of this file with the output of `anchor build` from contracts/target/idl/eth_demo.json before any production deploy. The web app will load and render with this stub, but any call into the eth_demo program will throw at runtime."
+    "description": "SODA ETH demo harness — Sepolia value transfer via CPI to soda"
   },
-  "instructions": [],
-  "accounts": [],
-  "events": [],
-  "errors": [],
-  "types": []
+  "instructions": [
+    {
+      "name": "sign_eth_transfer",
+      "discriminator": [
+        232,
+        23,
+        138,
+        149,
+        252,
+        89,
+        241,
+        156
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "committee"
+        },
+        {
+          "name": "sig_request",
+          "writable": true
+        },
+        {
+          "name": "soda_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "foreign_pk_xy",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "to",
+          "type": {
+            "array": [
+              "u8",
+              20
+            ]
+          }
+        },
+        {
+          "name": "value_wei_be",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        },
+        {
+          "name": "nonce",
+          "type": "u64"
+        },
+        {
+          "name": "gas_price_wei",
+          "type": "u64"
+        },
+        {
+          "name": "gas_limit",
+          "type": "u64"
+        },
+        {
+          "name": "derivation_seeds",
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "EthTxRequested",
+      "discriminator": [
+        177,
+        159,
+        87,
+        157,
+        4,
+        162,
+        34,
+        5
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "EthTxRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sig_request",
+            "type": "pubkey"
+          },
+          {
+            "name": "chain_id",
+            "type": "u64"
+          },
+          {
+            "name": "unsigned_rlp",
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ]
 }

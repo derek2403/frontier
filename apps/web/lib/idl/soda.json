@@ -1,14 +1,573 @@
 {
-  "address": "REPLACE_WITH_REAL_SODA_PROGRAM_ID",
+  "address": "99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4",
   "metadata": {
     "name": "soda",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "STUB IDL. Replace the contents of this file with the output of `anchor build` from contracts/target/idl/soda.json before any production deploy. The web app will load and render with this stub, but any call into the soda program will throw at runtime."
+    "description": "SODA core — Solana chain-signature primitive"
   },
-  "instructions": [],
-  "accounts": [],
-  "events": [],
-  "errors": [],
-  "types": []
+  "instructions": [
+    {
+      "name": "finalize_signature",
+      "discriminator": [
+        176,
+        243,
+        177,
+        57,
+        123,
+        11,
+        147,
+        189
+      ],
+      "accounts": [
+        {
+          "name": "committee",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "sig_request",
+          "writable": true
+        },
+        {
+          "name": "submitter",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "signature",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "recovery_id",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "init_committee",
+      "discriminator": [
+        235,
+        214,
+        80,
+        69,
+        254,
+        203,
+        126,
+        133
+      ],
+      "accounts": [
+        {
+          "name": "committee",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "group_pk",
+          "type": {
+            "array": [
+              "u8",
+              33
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "request_signature",
+      "discriminator": [
+        25,
+        225,
+        112,
+        74,
+        82,
+        94,
+        185,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "committee",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "sig_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  105,
+                  103
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "requester"
+              },
+              {
+                "kind": "arg",
+                "path": "payload"
+              }
+            ]
+          }
+        },
+        {
+          "name": "requester",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "foreign_pk_xy",
+          "type": {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        },
+        {
+          "name": "derivation_seeds",
+          "type": "bytes"
+        },
+        {
+          "name": "payload",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "chain_tag",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_committee",
+      "discriminator": [
+        120,
+        221,
+        44,
+        170,
+        255,
+        172,
+        164,
+        115
+      ],
+      "accounts": [
+        {
+          "name": "committee",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "committee"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_group_pk",
+          "type": {
+            "array": [
+              "u8",
+              33
+            ]
+          }
+        },
+        {
+          "name": "new_signer_count",
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Committee",
+      "discriminator": [
+        96,
+        136,
+        210,
+        244,
+        137,
+        110,
+        178,
+        104
+      ]
+    },
+    {
+      "name": "SigRequest",
+      "discriminator": [
+        54,
+        23,
+        210,
+        128,
+        123,
+        233,
+        241,
+        233
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "SigCompleted",
+      "discriminator": [
+        148,
+        189,
+        157,
+        116,
+        173,
+        240,
+        202,
+        23
+      ]
+    },
+    {
+      "name": "SigRequested",
+      "discriminator": [
+        242,
+        65,
+        52,
+        78,
+        40,
+        225,
+        81,
+        182
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "AlreadyCompleted",
+      "msg": "Signature request already completed"
+    },
+    {
+      "code": 6001,
+      "name": "PubkeyMismatch",
+      "msg": "Recovered pubkey does not match derived foreign pk"
+    },
+    {
+      "code": 6002,
+      "name": "Expired",
+      "msg": "Signature request expired"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidRecoveryId",
+      "msg": "Invalid recovery id (must be 0 or 1)"
+    },
+    {
+      "code": 6004,
+      "name": "SeedsTooLong",
+      "msg": "Derivation seeds exceed maximum length"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidGroupPk",
+      "msg": "Group public key is not a valid secp256k1 point"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidTweak",
+      "msg": "Tweak is not a valid secp256k1 scalar"
+    },
+    {
+      "code": 6007,
+      "name": "DerivationFailed",
+      "msg": "Derivation produced an invalid SEC1 encoding"
+    },
+    {
+      "code": 6008,
+      "name": "RecoverFailed",
+      "msg": "secp256k1_recover failed"
+    }
+  ],
+  "types": [
+    {
+      "name": "Committee",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "group_pk",
+            "type": {
+              "array": [
+                "u8",
+                33
+              ]
+            }
+          },
+          {
+            "name": "signer_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SigCompleted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sig_request",
+            "type": "pubkey"
+          },
+          {
+            "name": "signature",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "recovery_id",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SigRequest",
+      "docs": [
+        "Caller-provided expected pubkey: 64-byte (X || Y) form, matching what",
+        "`secp256k1_recover` returns. Caller computes this off-chain via",
+        "`group_pk + tweak·G` and is bound by the resulting derivation: any",
+        "signature produced for a foreign_pk the signer doesn't own (= no one",
+        "holds `group_sk + tweak`) will simply never verify."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "requester",
+            "type": "pubkey"
+          },
+          {
+            "name": "committee",
+            "type": "pubkey"
+          },
+          {
+            "name": "foreign_pk_xy",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "derivation_seeds",
+            "type": "bytes"
+          },
+          {
+            "name": "payload",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "chain_tag",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "completed",
+            "type": "bool"
+          },
+          {
+            "name": "signature",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "recovery_id",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SigRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sig_request",
+            "type": "pubkey"
+          },
+          {
+            "name": "requester",
+            "type": "pubkey"
+          },
+          {
+            "name": "foreign_pk_xy",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "payload",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "chain_tag",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "derivation_seeds",
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ]
 }
