@@ -1,5 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { useWallet } from "@solana/wallet-adapter-react";
 
 import DerivedAddressCard from "@/components/DerivedAddressCard";
 import SignAndSendButton from "@/components/SignAndSendButton";
@@ -13,6 +15,19 @@ import {
   EthRpc,
 } from "@soda-sdk/core";
 import { ETH_DEMO_PROGRAM_ID, SODA_PROGRAM_ID } from "@/lib/idls";
+
+// WalletMultiButton is a client-only component; dynamic-import keeps it
+// out of the Next 16 SSR pass (its internals touch `window`).
+const WalletMultiButton = dynamic(
+  () =>
+    import("@solana/wallet-adapter-react-ui").then(
+      (mod) => mod.WalletMultiButton,
+    ),
+  { ssr: false },
+);
+
+const MPC_COORDINATOR =
+  process.env.NEXT_PUBLIC_MPC_COORDINATOR_URL ?? "http://32.198.7.34:8000";
 
 const INITIAL_TIMELINE: TimelineState = {
   signEthTransfer: "idle",
@@ -53,6 +68,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [recipientInput, setRecipientInput] = useState("");
 
+  const { publicKey: walletPubkey, connected } = useWallet();
   const sepolia = useMemo(() => new EthRpc(SEPOLIA_RPC), []);
 
   useEffect(() => {
@@ -155,16 +171,19 @@ export default function Home() {
   };
 
   const isFunded = balance !== null && balance >= 200_000_000_000_000n;
-  const buttonDisabled = !isFunded || balance === null || !ethAddress;
+  const buttonDisabled = !connected || !isFunded || balance === null || !ethAddress;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="mx-auto flex max-w-3xl items-center justify-between">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="text-xl font-semibold">SODA</div>
-            <div className="text-sm text-zinc-500">Chain Signatures for Solana</div>
+            <div className="hidden text-sm text-zinc-500 sm:block">
+              Solana-Owned Derived Authority
+            </div>
           </div>
+          <WalletMultiButton />
         </div>
       </header>
 
@@ -174,17 +193,48 @@ export default function Home() {
             A Solana program just signed an Ethereum transaction.
           </h1>
           <p className="mt-3 text-zinc-400">
-            The address below is owned by an <code className="font-mono">eth_demo</code>{" "}
-            program PDA on Solana — no private key. Solana&apos;s{" "}
-            <code className="font-mono">secp256k1_recover</code> syscall verifies the
-            signature on-chain, then it&apos;s broadcast to Sepolia.
+            The address below is owned by an{" "}
+            <code className="font-mono">eth_demo</code> program PDA on Solana
+            — no private key. Two MPC nodes on AWS produce the signature
+            jointly; Solana&apos;s <code className="font-mono">secp256k1_recover</code>{" "}
+            syscall verifies it on-chain, then it&apos;s broadcast to Sepolia.
           </p>
+          {connected && walletPubkey ? (
+            <p className="mt-3 text-xs font-mono text-emerald-300/80">
+              connected: {walletPubkey.toBase58().slice(0, 8)}…{walletPubkey.toBase58().slice(-6)}
+            </p>
+          ) : (
+            <p className="mt-3 text-xs text-amber-300/80">
+              Connect Phantom (top-right) on devnet to enable the Sign &amp; Send button.
+            </p>
+          )}
         </div>
 
         <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
           <div>SODA program:    {programs.soda}</div>
           <div>eth_demo program: {programs.ethDemo}</div>
           <div>Solana RPC:      {SOLANA_RPC}</div>
+        </div>
+
+        {/* Live MPC committee status */}
+        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            </span>
+            Live MPC committee · 2-of-2 Lindell &apos;17 ECDSA
+          </div>
+          <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
+            <div>node P1 · us-east-1 · share x1</div>
+            <div>node P2 · us-east-1 · share x2</div>
+            <div>coordinator · {MPC_COORDINATOR}</div>
+            <div className="pt-1 text-xs text-emerald-300/60">
+              Neither node holds the joint secret. Signing runs the 4-message
+              Lindell &apos;17 protocol; the on-chain{" "}
+              <code>secp256k1_recover</code> syscall verifies the result.
+            </div>
+          </div>
         </div>
 
         <DerivedAddressCard

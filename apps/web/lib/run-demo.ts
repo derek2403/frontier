@@ -264,21 +264,49 @@ export async function runDemo(
   });
   onEvent({ kind: "step", name: "sigRequested", status: "done" });
 
-  // 6. Off-chain k256 sign with tweaked SK
+  // 6. Off-chain signing — MPC if configured, otherwise local k256.
   onEvent({ kind: "step", name: "signOffChain", status: "active" });
-  const skBig = bytesToBigInt(devSk);
-  const tweakBig = bytesToBigInt(tweak);
-  const tweakedSkBig = (skBig + tweakBig) % secp256k1.CURVE.n;
-  if (tweakedSkBig === 0n) throw new Error("tweaked sk is zero");
-  const tweakedSk = bigintToBe(tweakedSkBig, 32);
-  const sig = secp256k1.sign(payload, tweakedSk, { lowS: true });
-  const sigBytes = sig.toCompactRawBytes();
-  const recoveryId = sig.recovery!;
+  const MPC_URL = process.env.MPC_COORDINATOR_URL;
+  let sigBytes: Uint8Array;
+  let recoveryId: number;
+  if (MPC_URL) {
+    // Real Lindell '17 2-of-2 ECDSA via the AWS coordinator.
+    onEvent({
+      kind: "log",
+      message: `mpc: POST ${MPC_URL}/sign (payload + tweak)`,
+    });
+    const res = await fetch(`${MPC_URL}/sign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        payloadHex: Buffer.from(payload).toString("hex"),
+        tweakHex: Buffer.from(tweak).toString("hex"),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`mpc coordinator ${res.status}: ${await res.text()}`);
+    }
+    const sig = (await res.json()) as { r: string; s: string; v: number };
+    sigBytes = Buffer.concat([
+      Buffer.from(sig.r, "hex"),
+      Buffer.from(sig.s, "hex"),
+    ]);
+    recoveryId = sig.v;
+  } else {
+    const skBig = bytesToBigInt(devSk);
+    const tweakBig = bytesToBigInt(tweak);
+    const tweakedSkBig = (skBig + tweakBig) % secp256k1.CURVE.n;
+    if (tweakedSkBig === 0n) throw new Error("tweaked sk is zero");
+    const tweakedSk = bigintToBe(tweakedSkBig, 32);
+    const sig = secp256k1.sign(payload, tweakedSk, { lowS: true });
+    sigBytes = sig.toCompactRawBytes();
+    recoveryId = sig.recovery!;
+  }
   onEvent({
     kind: "step",
     name: "signOffChain",
     status: "done",
-    data: { recoveryId },
+    data: { recoveryId, mode: MPC_URL ? "mpc" : "local" },
   });
 
   // 7. soda::finalize_signature

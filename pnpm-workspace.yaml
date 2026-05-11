@@ -2,11 +2,15 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  '@stellar/stellar-sdk': false
+  blake-hash: false
   bufferutil: true
   esbuild: true
   protobufjs: true
   sharp: true
+  tiny-secp256k1: false
   unrs-resolver: true
+  usb: false
   utf-8-validate: true
 onlyBuiltDependencies:
   - bufferutil
