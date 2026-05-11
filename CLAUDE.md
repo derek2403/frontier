@@ -433,6 +433,138 @@ pnpm sdk:test                                  # 10 TS parity tests
   there's no real broadcast). Judges/viewers see the cryptographic audit
   without needing to copy/paste a hash between commands.
 
+## AWS MPC committee — live as of 2026-05-11
+
+The Lindell '17 2-of-2 committee from `aws.md` is now running on AWS. End-to-end
+signature test confirmed working: a `POST /sign` to the coordinator returns a valid
+`{r, s, v}` in ~400ms after the cold JIT warmup.
+
+### Deployed topology
+
+Three t3.small Amazon Linux 2023 instances in us-east-1, same VPC
+(`vpc-0d8e8a263c8c8e744`), same subnet (`subnet-0d47af10344722ae0`):
+
+| Role | Public IP | Private IP | Instance ID | Container |
+|---|---|---|---|---|
+| mpc-node-p1 | 44.201.168.181 | 172.31.94.167 | i-0af59c78f56604fc7 | `soda-mpc-node` (MPC_ROLE=p1, port 8001) |
+| mpc-node-p2 | 54.88.35.104 | 172.31.92.69 | i-067f5ad3e18c1c4f4 | `soda-mpc-node` (MPC_ROLE=p2, port 8002) |
+| mpc-coordinator | 32.198.7.34 | 172.31.89.14 | i-0226d17a7795e7f53 | `soda-mpc-coordinator` (port 8000) |
+
+PEM files (`~/Downloads/`): `soda-mpc-node-p1.pem`, `soda-mpc-node-p2.pem`,
+`soda-mpc-coordinator.pem`. Default SSH user is `ec2-user`.
+
+### Security group rules added (manual, in console)
+
+- coordinator SG: inbound TCP 8000 from `0.0.0.0/0` (laptop + relayer)
+- node-p1 SG: inbound TCP 8001 from `172.31.89.14/32` (coordinator's private IP)
+- node-p2 SG: inbound TCP 8002 from `172.31.89.14/32` (coordinator's private IP)
+
+Same-region (no cross-region). `aws.md` notes cross-region is recommended for the
+"two operators in different failure domains" claim. The hackathon trade-off was
+latency over geographic diversity.
+
+### DKG output (run locally on 2026-05-11)
+
+```
+group_pk.x = 45023a23c8bcf5c404eec8e6ba82c755ed9c62c9e47163e21469ba3979e6c9a2
+group_pk.y = 2fdd84a8e4f653f65011c90f559f9b61bfbdd7290a1493773a59d248bfe01349
+```
+
+Shares were shipped to the nodes via `scp` and are mounted at `/data/share-p*.json`
+inside each container. Local copies are still on the laptop until on-chain
+`update_committee` is run (step 2 in "What's next"). After that they get wiped.
+
+### Verified working
+
+```
+$ curl http://32.198.7.34:8000/health
+{"ok":true,"peers":{
+  "p1":{"ok":true,"role":"p1","groupPkXY":{"x":"45023a23...c9a2","y":"2fdd84a8...1349"}},
+  "p2":{"ok":true,"role":"p2","groupPkXY":{"x":"45023a23...c9a2","y":"2fdd84a8...1349"}}
+}}
+
+$ curl -X POST http://32.198.7.34:8000/sign \
+    -d '{"payloadHex":"0000000000000000000000000000000000000000000000000000000000000001"}'
+{"r":"948ea1d1...","s":"10ccb558...","v":0}
+```
+
+### Deploy script
+
+`scripts/deploy-mpc-aws.sh` (added 2026-05-11) automates the whole flow from the laptop:
+- `git fetch && reset --hard origin/main` on each EC2 (idempotent re-deploy)
+- SCPs the local `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml` as overrides
+  so unpushed local fixes deploy without needing a commit
+- SCPs share files to the right node
+- `docker build` + `docker run` with the right env vars
+- Retry-loop healthcheck (30s) on each container
+
+Edit the IPs at the top of the script if any instance is replaced. Run from repo root:
+```
+bash scripts/deploy-mpc-aws.sh
+```
+
+### Issues hit during the first deploy (for the next round)
+
+- **`pnpm mpc:dkg` wrote shares to `apps/mpc-node/apps/mpc-node/shares/`** because
+  the root script passed relative paths and pnpm chdir'd into the workspace first.
+  Fixed in root `package.json` by using `../../apps/mpc-node/shares/...` paths.
+  Same fix applied to `mpc:update-committee`.
+
+- **pnpm 11 `ERR_PNPM_IGNORED_BUILDS` blocked docker builds** because native deps
+  (esbuild, sharp, bufferutil, protobufjs, unrs-resolver, utf-8-validate) need
+  explicit approval. Fixed by:
+  - `"packageManager": "pnpm@11.0.9"` added to root `package.json` so corepack uses
+    matching pnpm inside the Docker build
+  - `pnpm-workspace.yaml` declares both `allowBuilds: {...}` (map form, all `true`)
+    and `onlyBuiltDependencies: [...]` (array form) for forward compat
+
+- **Initial 3-second healthcheck timed out** even though containers were fine —
+  corepack pulls pnpm and tsx warms up on first run. Replaced with a 30-second
+  retry loop.
+
+- **EC2 security groups don't open MPC ports by default.** Required three manual
+  console edits (see "Security group rules added"). Worth scripting via AWS CLI
+  next time.
+
+## What's next (handed off)
+
+1. **`anchor build`** to generate the program IDL at `contracts/target/idl/soda.json`.
+   The `mpc:update-committee` script reads this file to know the program's instructions.
+   ```
+   cd contracts && anchor build && cd ..
+   ```
+
+2. **Update the on-chain Committee PDA** with the joint `group_pk` (values above):
+   ```
+   ANCHOR_WALLET=~/.config/solana/id.json \
+   SOLANA_DEVNET_RPC_URL=https://api.devnet.solana.com \
+   pnpm mpc:update-committee
+   ```
+   The wallet at `~/.config/solana/id.json` must match the `Committee.authority` (the
+   wallet that originally called `init_committee`). If it errors with an auth check,
+   that's the cause.
+
+3. **Run the demo end-to-end through AWS:**
+   ```
+   # terminal 1
+   MPC_COORDINATOR_URL=http://32.198.7.34:8000 pnpm mpc:subscribe
+   # terminal 2
+   ./demo.sh
+   ```
+   Expected flow: subscriber sees `SigRequested` on devnet → POSTs to AWS coord →
+   gets `{r,s,v}` → submits `finalize_signature` → demo continues to Sepolia broadcast.
+
+4. **Wipe local share files** once step 3 succeeds:
+   ```
+   rm -P apps/mpc-node/shares/share-p1.json apps/mpc-node/shares/share-p2.json
+   ```
+   After this, the only places the shares exist on Earth are inside the two EC2 nodes.
+   This is the property MPC is supposed to give: no single host holds both shares.
+
+5. **Pre-warm the committee before demo day.** First `/sign` after a container restart
+   takes ~1.5s (cold JIT + corepack pull). Run one warmup `/sign` ~5 minutes before any
+   judge sees the demo.
+
 ## Pointers
 
 - Master plan (BTC-first §8): `C:\Users\User\.claude\plans\hi-i-wanted-to-linear-catmull.md`
