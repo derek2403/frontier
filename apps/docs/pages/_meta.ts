@@ -10,6 +10,16 @@ export default {
   guides: 'Guides',
   deploy: 'Deploy',
   reference: 'Reference',
+  '-- demo': {
+    type: 'separator',
+    title: 'Demo',
+  },
+  demo_link: {
+    title: 'Try the live demo ↗',
+    type: 'page',
+    href: process.env.NEXT_PUBLIC_DEMO_URL ?? 'https://soda-demo.vercel.app',
+    newWindow: true,
+  },
   '-- links': {
     type: 'separator',
     title: 'Links',
@@ -17,7 +27,7 @@ export default {
   github_link: {
     title: 'GitHub ↗',
     type: 'page',
-    href: 'https://github.com/JingYuan0926/frontier',
+    href: 'https://github.com/derek2403/frontier',
     newWindow: true,
   },
 }

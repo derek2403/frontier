@@ -164,24 +164,12 @@ export default async function handler(
       sigRequestPda,
     );
     const payload: Uint8Array = Uint8Array.from(sigRequest.payload);
-    const seeds: Uint8Array = Uint8Array.from(sigRequest.derivationSeeds);
-    const chainTag: Uint8Array = Uint8Array.from(sigRequest.chainTag);
-    const requester: PublicKey = sigRequest.requester;
 
-    // Compute tweak from (requester, seeds, chainTag) — same algorithm as
-    // soda-sdk's computeTweak.
-    const { sha256 } = await import("@noble/hashes/sha2.js");
-    const tweakInput = new Uint8Array(
-      7 + 32 + seeds.length + 32, // "SODA-v1" + pubkey + seeds + chain_tag
-    );
-    let o = 0;
-    tweakInput.set(new TextEncoder().encode("SODA-v1"), o); o += 7;
-    tweakInput.set(requester.toBytes(), o); o += 32;
-    tweakInput.set(seeds, o); o += seeds.length;
-    tweakInput.set(chainTag, o);
-    const tweak = sha256(tweakInput);
-
-    // Call AWS MPC coordinator.
+    // v0.5: no tweak in the MPC call. The Lindell '17 lib's cypher_x1 (P2's
+    // Paillier-encrypted view of x1) can't be rewritten per-signature, so
+    // the only consistent path is sign-for-group_pk-directly. Per-PDA
+    // foreign addresses are a v1 task. The frontend stored foreign_pk_xy =
+    // group_pk_xy, so MPC signing for group_pk produces a matching sig.
     const MPC_URL = process.env.MPC_COORDINATOR_URL;
     if (!MPC_URL) {
       return res.status(500).json({ error: "MPC_COORDINATOR_URL not set" });
@@ -191,7 +179,6 @@ export default async function handler(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         payloadHex: Buffer.from(payload).toString("hex"),
-        tweakHex: Buffer.from(tweak).toString("hex"),
       }),
     });
     if (!mpcRes.ok) {

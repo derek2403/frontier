@@ -15,13 +15,12 @@ import SignedHexView from "@/components/SignedHexView";
 import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
   bigintToBe,
-  computeTweak,
-  deriveForeignPk,
   encodeUnsignedLegacy,
   ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
+import { secp256k1 as secp256k1Curves } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { QRCodeSVG } from "qrcode.react";
 import { ETH_DEMO_PROGRAM_ID, ethDemoIdl, sodaIdl, SODA_PROGRAM_ID } from "@/lib/idls";
@@ -95,13 +94,13 @@ export default function Home() {
 
   useEffect(() => {
     if (!groupPkHex) return;
+    // No tweak — see "v0.5 quirk" note in onSign for the full reason.
+    // Address is the joint group_pk's ETH address.
     const groupPk = Uint8Array.from(
       Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
     );
-    const ethDemoIdBytes = new PublicKey(ETH_DEMO_PROGRAM_ID).toBytes();
-    const tweak = computeTweak(ethDemoIdBytes, new Uint8Array(0), ETH_SEPOLIA_CHAIN_TAG);
-    const foreignPk = deriveForeignPk(groupPk, tweak);
-    setEthAddress(bytesToHex(ethAddressFromPk(foreignPk)));
+    const groupPkUncompressed = secp256k1Curves.Point.fromBytes(groupPk).toBytes(false);
+    setEthAddress(bytesToHex(ethAddressFromPk(groupPkUncompressed)));
   }, [groupPkHex]);
 
   useEffect(() => {
@@ -149,17 +148,20 @@ export default function Home() {
 
     try {
       // -------- 1. Compute derivation in the browser --------
+      // v0.5 quirk: the Lindell '17 lib in apps/mpc-node tweaks P1's `x1`
+      // but cannot tweak P2's `cypher_x1` (which is Paillier-encrypted x1)
+      // without also re-encrypting and sending the new ciphertext to P2.
+      // Until we patch the protocol, the foreign address derives directly
+      // from the joint group_pk with NO tweak — one address per committee
+      // instead of per-PDA. The "no private key anywhere" property still
+      // holds; per-program-PDA isolation is a v1 task.
       const groupPk = Uint8Array.from(
         Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
       );
-      const ethDemoIdBytes = new PublicKey(ETH_DEMO_PROGRAM_ID).toBytes();
       const derivationSeeds = new Uint8Array(0);
-      const tweak = computeTweak(
-        ethDemoIdBytes,
-        derivationSeeds,
-        ETH_SEPOLIA_CHAIN_TAG,
-      );
-      const foreignPk = deriveForeignPk(groupPk, tweak);
+      // Decompress the 33-byte group_pk to 65 bytes (0x04 || X || Y).
+      const groupPkPoint = secp256k1Curves.Point.fromBytes(groupPk);
+      const foreignPk = groupPkPoint.toBytes(false);
       const foreignPkXy = foreignPk.subarray(1); // 64 bytes (X || Y)
       const ethAddrBytes = ethAddressFromPk(foreignPk);
 
