@@ -126,8 +126,13 @@ async function main() {
   console.log(`eth_demo program:  ${ethDemoProgram.programId.toBase58()}`);
 
   // --- 1. Dev signer key + committee init ---
-  const devSk = loadOrCreateSignerKey();
-  const groupPkCompressed = secp256k1.getPublicKey(devSk, true);
+  // Local devSk is only used when MPC_COORDINATOR_URL is unset (single-key
+  // mode). In MPC mode, group_pk comes from the on-chain Committee.
+  const MPC_MODE = !!process.env.MPC_COORDINATOR_URL;
+  const devSk = MPC_MODE ? new Uint8Array(32) : loadOrCreateSignerKey();
+  let groupPkCompressed = MPC_MODE
+    ? new Uint8Array(33)
+    : secp256k1.getPublicKey(devSk, true);
 
   const [committeePda] = PublicKey.findProgramAddressSync(
     [Buffer.from("committee")],
@@ -136,6 +141,11 @@ async function main() {
 
   const committeeAcct = await connection.getAccountInfo(committeePda);
   if (!committeeAcct) {
+    if (MPC_MODE) {
+      throw new Error(
+        "MPC mode requires an existing Committee PDA. Run `pnpm mpc:update-committee` after DKG.",
+      );
+    }
     console.log("\nInitializing SODA committee on Solana...");
     const sig = await (sodaProgram.methods as any)
       .initCommittee(Array.from(groupPkCompressed))
@@ -149,12 +159,18 @@ async function main() {
   } else {
     const committee = await (sodaProgram.account as any).committee.fetch(committeePda);
     const onChain = Buffer.from(committee.groupPk).toString("hex");
-    const local = Buffer.from(groupPkCompressed).toString("hex");
-    if (onChain !== local) {
-      throw new Error(
-        `Committee group_pk mismatch.\n  on-chain: ${onChain}\n  local:    ${local}\n` +
-          `Either delete ${SIGNER_KEY_PATH} and rerun, or restart validator with --reset.`,
-      );
+    if (MPC_MODE) {
+      // Trust the on-chain key (it was set by update_committee from DKG output).
+      groupPkCompressed = Uint8Array.from(Buffer.from(onChain, "hex"));
+      console.log(`  group_pk (on-chain, MPC):  ${onChain}`);
+    } else {
+      const local = Buffer.from(groupPkCompressed).toString("hex");
+      if (onChain !== local) {
+        throw new Error(
+          `Committee group_pk mismatch.\n  on-chain: ${onChain}\n  local:    ${local}\n` +
+            `Either delete ${SIGNER_KEY_PATH} and rerun, or set MPC_COORDINATOR_URL to use MPC mode.`,
+        );
+      }
     }
   }
 
@@ -272,16 +288,37 @@ async function main() {
   console.log(`      ✓ ${signTxSig}`);
   console.log(`      ↗ ${solscanTx(signTxSig)}`);
 
-  // --- 6. Off-chain: k256 sign with tweaked SK ---
-  const skBig = bytesToBigInt(devSk);
-  const tweakBig = bytesToBigInt(tweak);
-  const tweakedSkBig = (skBig + tweakBig) % secp256k1.CURVE.n;
-  if (tweakedSkBig === 0n) throw new Error("tweaked sk is zero");
-  const tweakedSk = bigintToBe(tweakedSkBig, 32);
-
-  const sig = secp256k1.sign(payload, tweakedSk, { lowS: true });
-  const sigBytes = sig.toCompactRawBytes();
-  const recoveryId = sig.recovery!;
+  // --- 6. Off-chain signing — AWS MPC committee if configured, else local k256. ---
+  const MPC_URL = process.env.MPC_COORDINATOR_URL;
+  let sigBytes: Uint8Array;
+  let recoveryId: number;
+  if (MPC_URL) {
+    console.log(`\n[*] sign via MPC committee  ${MPC_URL}/sign`);
+    const res = await fetch(`${MPC_URL}/sign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        payloadHex: Buffer.from(payload).toString("hex"),
+        tweakHex: Buffer.from(tweak).toString("hex"),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`mpc coordinator ${res.status}: ${await res.text()}`);
+    }
+    const sig = (await res.json()) as { r: string; s: string; v: number };
+    sigBytes = Buffer.concat([Buffer.from(sig.r, "hex"), Buffer.from(sig.s, "hex")]);
+    recoveryId = sig.v;
+    console.log(`      ✓ Lindell '17 2-of-2 signature, recovery_id=${recoveryId}`);
+  } else {
+    const skBig = bytesToBigInt(devSk);
+    const tweakBig = bytesToBigInt(tweak);
+    const tweakedSkBig = (skBig + tweakBig) % secp256k1.CURVE.n;
+    if (tweakedSkBig === 0n) throw new Error("tweaked sk is zero");
+    const tweakedSk = bigintToBe(tweakedSkBig, 32);
+    const sig = secp256k1.sign(payload, tweakedSk, { lowS: true });
+    sigBytes = sig.toCompactRawBytes();
+    recoveryId = sig.recovery!;
+  }
 
   // --- 7. Solana: soda::finalize_signature (on-chain secp256k1_recover) ---
   console.log("\n[2/3] soda::finalize_signature  (on-chain secp256k1_recover verifies)");

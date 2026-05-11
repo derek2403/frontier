@@ -1,20 +1,29 @@
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
+import BN from "bn.js";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { AnchorProvider, Program, type Wallet } from "@coral-xyz/anchor";
+import {
+  useAnchorWallet,
+  useConnection,
+  useWallet,
+} from "@solana/wallet-adapter-react";
 
 import DerivedAddressCard from "@/components/DerivedAddressCard";
 import SignAndSendButton from "@/components/SignAndSendButton";
 import SignedHexView from "@/components/SignedHexView";
 import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
+  bigintToBe,
   computeTweak,
   deriveForeignPk,
+  encodeUnsignedLegacy,
   ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
-import { ETH_DEMO_PROGRAM_ID, SODA_PROGRAM_ID } from "@/lib/idls";
+import { keccak_256 } from "@noble/hashes/sha3";
+import { ETH_DEMO_PROGRAM_ID, ethDemoIdl, sodaIdl, SODA_PROGRAM_ID } from "@/lib/idls";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
 // out of the Next 16 SSR pass (its internals touch `window`).
@@ -69,6 +78,8 @@ export default function Home() {
   const [recipientInput, setRecipientInput] = useState("");
 
   const { publicKey: walletPubkey, connected } = useWallet();
+  const anchorWallet = useAnchorWallet();
+  const { connection } = useConnection();
   const sepolia = useMemo(() => new EthRpc(SEPOLIA_RPC), []);
 
   useEffect(() => {
@@ -116,44 +127,160 @@ export default function Home() {
     [],
   );
 
-  const onSign = () => {
+  const onSign = async () => {
     if (busy) return;
+    if (!anchorWallet || !walletPubkey) {
+      setError("connect Phantom first");
+      return;
+    }
+    if (!groupPkHex || !ethAddress) {
+      setError("group_pk not loaded yet");
+      return;
+    }
+
     setError(null);
     setSignedHex(null);
     setResult(null);
     setTimeline(INITIAL_TIMELINE);
     setBusy(true);
-
-    const params = new URLSearchParams();
-    if (recipientInput.trim()) params.set("recipient", recipientInput.trim());
-    const url = `/api/run${params.toString() ? `?${params.toString()}` : ""}`;
-    const es = new EventSource(url);
-
-    const updateStep = (name: keyof TimelineState, status: Step) => {
+    const updateStep = (name: keyof TimelineState, status: Step) =>
       setTimeline((prev) => ({ ...prev, [name]: status }));
-    };
 
-    es.addEventListener("step", (e) => {
-      const event = JSON.parse((e as MessageEvent).data) as {
-        kind: "step";
-        name: keyof TimelineState;
-        status: Step;
+    try {
+      // -------- 1. Compute derivation in the browser --------
+      const groupPk = Uint8Array.from(
+        Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
+      );
+      const ethDemoIdBytes = new PublicKey(ETH_DEMO_PROGRAM_ID).toBytes();
+      const derivationSeeds = new Uint8Array(0);
+      const tweak = computeTweak(
+        ethDemoIdBytes,
+        derivationSeeds,
+        ETH_SEPOLIA_CHAIN_TAG,
+      );
+      const foreignPk = deriveForeignPk(groupPk, tweak);
+      const foreignPkXy = foreignPk.subarray(1); // 64 bytes (X || Y)
+      const ethAddrBytes = ethAddressFromPk(foreignPk);
+
+      // -------- 2. Build the unsigned Sepolia tx --------
+      const recipientHex = (recipientInput.trim() || ethAddress).replace(
+        /^0x/,
+        "",
+      );
+      const recipient = Buffer.from(recipientHex, "hex");
+      if (recipient.length !== 20) {
+        throw new Error("recipient must be 20 bytes");
+      }
+
+      const nonce = await sepolia.getNonce(ethAddress);
+      const MIN_GAS_PRICE = 2_000_000_000n; // 2 gwei
+      const fetched = await sepolia.getGasPrice();
+      const bumped = (fetched * 110n) / 100n;
+      const gasPrice = bumped > MIN_GAS_PRICE ? bumped : MIN_GAS_PRICE;
+      const valueWei = 100_000_000_000_000n; // 0.0001 ETH
+      const valueWeiBe = bigintToBe(valueWei, 16);
+      const gasLimit = 21_000n;
+
+      const unsignedRlp = encodeUnsignedLegacy({
+        nonce,
+        gasPriceWei: gasPrice,
+        gasLimit,
+        to: new Uint8Array(recipient),
+        valueWeiBe,
+        data: new Uint8Array(0),
+        chainId: 11_155_111n,
+      });
+      const payload = keccak_256(unsignedRlp);
+
+      // -------- 3. Phantom signs eth_demo::sign_eth_transfer --------
+      updateStep("signEthTransfer", "active");
+
+      const sodaProgramId = new PublicKey(SODA_PROGRAM_ID);
+      const ethDemoProgramId = new PublicKey(ETH_DEMO_PROGRAM_ID);
+      const [committeePda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("committee")],
+        sodaProgramId,
+      );
+      const [sigRequestPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("sig"), walletPubkey.toBuffer(), Buffer.from(payload)],
+        sodaProgramId,
+      );
+
+      const provider = new AnchorProvider(
+        connection,
+        anchorWallet as Wallet,
+        { commitment: "confirmed" },
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ethDemoProgram = new Program(ethDemoIdl as any, provider);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signTxSig: string = await (ethDemoProgram.methods as any)
+        .signEthTransfer(
+          Array.from(foreignPkXy),
+          Array.from(recipient),
+          Array.from(valueWeiBe),
+          new BN(nonce.toString()),
+          new BN(gasPrice.toString()),
+          new BN(gasLimit.toString()),
+          Buffer.from(derivationSeeds),
+        )
+        .accounts({
+          user: walletPubkey,
+          committee: committeePda,
+          sigRequest: sigRequestPda,
+          sodaProgram: sodaProgramId,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      updateStep("signEthTransfer", "done");
+      updateStep("sigRequested", "done");
+
+      // -------- 4. Backend: MPC sign + finalize + broadcast --------
+      updateStep("signOffChain", "active");
+      const finalizeRes = await fetch("/api/finalize", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sigRequestPda: sigRequestPda.toBase58(),
+          recipientHex,
+          nonce: nonce.toString(),
+          gasPriceWei: gasPrice.toString(),
+          gasLimit: gasLimit.toString(),
+          valueWei: valueWei.toString(),
+        }),
+      });
+      if (!finalizeRes.ok) {
+        const t = await finalizeRes.text();
+        throw new Error(`/api/finalize ${finalizeRes.status}: ${t}`);
+      }
+      const finalize = (await finalizeRes.json()) as {
+        ethTxHash: string;
+        signedHex: string;
+        finalizeSignatureTx: string;
+        recoveryId: number;
+        ethAddress: string;
+        isSelfTransfer: boolean;
       };
-      updateStep(event.name, event.status);
-    });
 
-    es.addEventListener("done", (e) => {
-      const r = JSON.parse((e as MessageEvent).data) as RunResult;
-      setResult(r);
-      setSignedHex(r.signedHex);
-      setBusy(false);
-      es.close();
-    });
+      updateStep("signOffChain", "done");
+      updateStep("finalizeOnChain", "done");
+      updateStep("broadcastEth", "done");
 
-    es.addEventListener("fail", (e) => {
-      const err = JSON.parse((e as MessageEvent).data ?? "{}") as { message?: string };
-      setError(err.message ?? "demo failed");
-      setBusy(false);
+      setResult({
+        ethAddress: finalize.ethAddress,
+        recipient: "0x" + recipientHex,
+        isSelfTransfer: finalize.isSelfTransfer,
+        signedHex: finalize.signedHex,
+        ethTxHash: finalize.ethTxHash,
+        signEthTransferTx: signTxSig,
+        finalizeSignatureTx: finalize.finalizeSignatureTx,
+        payloadHex: Buffer.from(payload).toString("hex"),
+      });
+      setSignedHex(finalize.signedHex);
+    } catch (e) {
+      const msg = (e as Error).message ?? String(e);
+      setError(msg);
       setTimeline((prev) => {
         const next = { ...prev };
         (Object.keys(next) as (keyof TimelineState)[]).forEach((k) => {
@@ -161,13 +288,9 @@ export default function Home() {
         });
         return next;
       });
-      es.close();
-    });
-
-    es.onerror = () => {
-      if (!busy) return;
-      es.close();
-    };
+    } finally {
+      setBusy(false);
+    }
   };
 
   const isFunded = balance !== null && balance >= 200_000_000_000_000n;
