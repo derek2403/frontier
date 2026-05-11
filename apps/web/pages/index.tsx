@@ -23,6 +23,7 @@ import {
   EthRpc,
 } from "@soda-sdk/core";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { QRCodeSVG } from "qrcode.react";
 import { ETH_DEMO_PROGRAM_ID, ethDemoIdl, sodaIdl, SODA_PROGRAM_ID } from "@/lib/idls";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
@@ -411,19 +412,64 @@ export default function Home() {
         <SignedHexView signedRlpHex={signedHex} />
 
         {result ? (
-          <div className="rounded-2xl border border-emerald-800 bg-emerald-950/30 p-6 space-y-3">
+          <div className="rounded-2xl border border-emerald-800 bg-emerald-950/30 p-6 space-y-4">
             <div className="text-xs uppercase tracking-wider text-emerald-400">
-              Done — open in Etherscan
+              Done · verify on both chains
             </div>
-            <a
-              href={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="block break-all font-mono text-sm text-emerald-200 underline hover:text-emerald-100"
-            >
-              https://sepolia.etherscan.io/tx/{result.ethTxHash}
-            </a>
-            <div className="grid grid-cols-1 gap-1 pt-2 text-xs font-mono text-emerald-300/70 sm:grid-cols-[auto_1fr] sm:gap-x-4">
+
+            <div className="grid gap-6 sm:grid-cols-2">
+              {/* Ethereum side */}
+              <div className="space-y-2">
+                <div className="text-xs uppercase tracking-wider text-emerald-300/70">
+                  Sepolia · Etherscan
+                </div>
+                <div className="rounded-lg bg-white p-3">
+                  <QRCodeSVG
+                    value={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
+                    size={160}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                    level="M"
+                    className="mx-auto block"
+                  />
+                </div>
+                <a
+                  href={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
+                >
+                  {result.ethTxHash}
+                </a>
+              </div>
+
+              {/* Solana side */}
+              <div className="space-y-2">
+                <div className="text-xs uppercase tracking-wider text-emerald-300/70">
+                  Solana · finalize_signature
+                </div>
+                <div className="rounded-lg bg-white p-3">
+                  <QRCodeSVG
+                    value={`https://solscan.io/tx/${result.finalizeSignatureTx}?cluster=devnet`}
+                    size={160}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                    level="M"
+                    className="mx-auto block"
+                  />
+                </div>
+                <a
+                  href={`https://solscan.io/tx/${result.finalizeSignatureTx}?cluster=devnet`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
+                >
+                  {result.finalizeSignatureTx}
+                </a>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-1 border-t border-emerald-900/50 pt-3 text-xs font-mono text-emerald-300/70 sm:grid-cols-[auto_1fr] sm:gap-x-4">
               <span className="text-emerald-300/50">from</span>
               <span className="break-all">
                 {result.ethAddress} (controlled by Solana, no private key)
@@ -435,10 +481,10 @@ export default function Home() {
               </span>
               <span className="text-emerald-300/50">value</span>
               <span>0.0001 ETH</span>
+              <span className="text-emerald-300/50">soda program</span>
+              <span className="break-all">{programs.soda}</span>
               <span className="text-emerald-300/50">sign_eth_transfer</span>
               <span className="break-all">{result.signEthTransferTx}</span>
-              <span className="text-emerald-300/50">finalize_signature</span>
-              <span className="break-all">{result.finalizeSignatureTx}</span>
             </div>
           </div>
         ) : null}
