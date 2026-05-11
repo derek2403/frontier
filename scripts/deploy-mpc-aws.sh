@@ -128,14 +128,19 @@ sudo docker run -d --restart unless-stopped \
   -v "$(pwd)/apps/mpc-node/shares:/data:ro" \
   -p 8001:8001 \
   soda-mpc-node >/dev/null
-sleep 3
-if curl -fs http://localhost:8001/health >/dev/null; then
-  echo "p1 healthy"
-else
-  echo "p1 NOT healthy. Last 30 lines of container logs:"
-  sudo docker logs mpc-node-p1 2>&1 | tail -30
-  exit 1
-fi
+echo "waiting for p1 to come up..."
+for i in $(seq 1 30); do
+  if curl -fs http://localhost:8001/health >/dev/null 2>&1; then
+    echo "p1 healthy (after ${i}s)"
+    break
+  fi
+  sleep 1
+  if [[ "$i" == "30" ]]; then
+    echo "p1 NOT healthy after 30s. Last 40 lines of container logs:"
+    sudo docker logs mpc-node-p1 2>&1 | tail -40
+    exit 1
+  fi
+done
 EOF
 
 log "[p2] building + running mpc-node container"
@@ -153,14 +158,19 @@ sudo docker run -d --restart unless-stopped \
   -v "$(pwd)/apps/mpc-node/shares:/data:ro" \
   -p 8002:8002 \
   soda-mpc-node >/dev/null
-sleep 3
-if curl -fs http://localhost:8002/health >/dev/null; then
-  echo "p2 healthy"
-else
-  echo "p2 NOT healthy. Last 30 lines of container logs:"
-  sudo docker logs mpc-node-p2 2>&1 | tail -30
-  exit 1
-fi
+echo "waiting for p2 to come up..."
+for i in $(seq 1 30); do
+  if curl -fs http://localhost:8002/health >/dev/null 2>&1; then
+    echo "p2 healthy (after ${i}s)"
+    break
+  fi
+  sleep 1
+  if [[ "$i" == "30" ]]; then
+    echo "p2 NOT healthy after 30s. Last 40 lines of container logs:"
+    sudo docker logs mpc-node-p2 2>&1 | tail -40
+    exit 1
+  fi
+done
 EOF
 
 log "[coord] building + running mpc-coordinator container"
@@ -179,14 +189,19 @@ sudo docker run -d --restart unless-stopped \
   -e PORT=8000 \
   -p 8000:8000 \
   soda-mpc-coordinator >/dev/null
-sleep 4
-if curl -fs http://localhost:8000/health >/dev/null; then
-  echo "coordinator healthy"
-else
-  echo "coordinator NOT healthy. Last 30 lines of container logs:"
-  sudo docker logs mpc-coordinator 2>&1 | tail -30
-  exit 1
-fi
+echo "waiting for coordinator to come up..."
+for i in $(seq 1 30); do
+  if curl -fs http://localhost:8000/health >/dev/null 2>&1; then
+    echo "coordinator healthy (after ${i}s)"
+    break
+  fi
+  sleep 1
+  if [[ "$i" == "30" ]]; then
+    echo "coordinator NOT healthy after 30s. Last 40 lines of container logs:"
+    sudo docker logs mpc-coordinator 2>&1 | tail -40
+    exit 1
+  fi
+done
 EOF
 
 # ─── 4. SUMMARY ───────────────────────────────────────────────────────────
