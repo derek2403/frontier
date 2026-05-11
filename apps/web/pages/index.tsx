@@ -320,7 +320,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             <a
-              href={DOCS_URL}
+              href="https://frontier-docs-cazz.vercel.app/"
               target="_blank"
               rel="noreferrer"
               className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
