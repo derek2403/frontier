@@ -333,58 +333,72 @@ export default function Home() {
           )}
         </div>
 
-        <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
-          <div>SODA program:    {programs.soda}</div>
-          <div>eth_demo program: {programs.ethDemo}</div>
-          <div>Solana RPC:      {SOLANA_RPC}</div>
-        </div>
+        {connected ? (
+          <>
+            <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
+              <div>SODA program:     {programs.soda}</div>
+              <div>eth_demo program: {programs.ethDemo}</div>
+              <div>Solana cluster:   devnet (Helius)</div>
+            </div>
 
-        {/* Live MPC committee status */}
-        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            </span>
-            Live MPC committee · 2-of-2 Lindell &apos;17 ECDSA
-          </div>
-          <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-            <div>node P1 · us-east-1 · share x1</div>
-            <div>node P2 · us-east-1 · share x2</div>
-            <div>coordinator · {MPC_COORDINATOR}</div>
-            <div className="pt-1 text-xs text-emerald-300/60">
-              Neither node holds the joint secret. Signing runs the 4-message
-              Lindell &apos;17 protocol; the on-chain{" "}
-              <code>secp256k1_recover</code> syscall verifies the result.
+            {/* Live MPC committee status */}
+            <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                </span>
+                Live MPC committee · 2-of-2 Lindell &apos;17 ECDSA
+              </div>
+              <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
+                <div>node P1 · us-east-1 · share x1</div>
+                <div>node P2 · us-east-1 · share x2</div>
+                <div>coordinator · {MPC_COORDINATOR}</div>
+                <div className="pt-1 text-xs text-emerald-300/60">
+                  Neither node holds the joint secret. Signing runs the 4-message
+                  Lindell &apos;17 protocol; the on-chain{" "}
+                  <code>secp256k1_recover</code> syscall verifies the result.
+                </div>
+              </div>
+            </div>
+
+            <DerivedAddressCard
+              ethAddress={ethAddress}
+              sepoliaBalanceWei={balance}
+              loading={!groupPkHex}
+            />
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 space-y-3">
+              <label className="block text-xs uppercase tracking-wider text-zinc-500">
+                Recipient (optional — defaults to self-transfer)
+              </label>
+              <input
+                type="text"
+                value={recipientInput}
+                onChange={(e) => setRecipientInput(e.target.value)}
+                placeholder={ethAddress ?? "0x…"}
+                disabled={busy}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-200 placeholder-zinc-600 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+              />
+            </div>
+
+            <SignAndSendButton
+              disabled={buttonDisabled}
+              busy={busy}
+              onClick={onSign}
+            />
+          </>
+        ) : (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-8 text-center">
+            <div className="text-lg font-medium text-zinc-200">
+              Connect Phantom to begin
+            </div>
+            <div className="mt-2 text-sm text-zinc-500">
+              Use the button in the top-right. Devnet only — Phantom will switch
+              automatically.
             </div>
           </div>
-        </div>
-
-        <DerivedAddressCard
-          ethAddress={ethAddress}
-          sepoliaBalanceWei={balance}
-          loading={!groupPkHex}
-        />
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 space-y-3">
-          <label className="block text-xs uppercase tracking-wider text-zinc-500">
-            Recipient (optional — defaults to self-transfer)
-          </label>
-          <input
-            type="text"
-            value={recipientInput}
-            onChange={(e) => setRecipientInput(e.target.value)}
-            placeholder={ethAddress ?? "0x…"}
-            disabled={busy}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-200 placeholder-zinc-600 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
-          />
-        </div>
-
-        <SignAndSendButton
-          disabled={buttonDisabled}
-          busy={busy}
-          onClick={onSign}
-        />
+        )}
 
         {error ? (
           <div className="rounded-lg bg-rose-950/40 border border-rose-900 px-4 py-3 text-sm text-rose-200">
