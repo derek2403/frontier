@@ -175,6 +175,7 @@ EOF
 
 log "[coord] building + running mpc-coordinator container"
 # Note: heredoc is UNquoted on purpose so $P1_PRIVATE / $P2_PRIVATE expand here.
+# Anything that must evaluate on the remote side is escaped with backslashes.
 remote "$PEM_COORD" "$COORD_IP" bash -s <<EOF
 set -e
 cd frontier
@@ -190,13 +191,13 @@ sudo docker run -d --restart unless-stopped \
   -p 8000:8000 \
   soda-mpc-coordinator >/dev/null
 echo "waiting for coordinator to come up..."
-for i in $(seq 1 30); do
+for i in \$(seq 1 30); do
   if curl -fs http://localhost:8000/health >/dev/null 2>&1; then
-    echo "coordinator healthy (after ${i}s)"
+    echo "coordinator healthy (after \${i}s)"
     break
   fi
   sleep 1
-  if [[ "$i" == "30" ]]; then
+  if [[ "\$i" == "30" ]]; then
     echo "coordinator NOT healthy after 30s. Last 40 lines of container logs:"
     sudo docker logs mpc-coordinator 2>&1 | tail -40
     exit 1
