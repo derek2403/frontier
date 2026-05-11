@@ -177,7 +177,13 @@ export default function Home() {
       const MIN_GAS_PRICE = 2_000_000_000n; // 2 gwei
       const fetched = await sepolia.getGasPrice();
       const bumped = (fetched * 110n) / 100n;
-      const gasPrice = bumped > MIN_GAS_PRICE ? bumped : MIN_GAS_PRICE;
+      const baseGasPrice = bumped > MIN_GAS_PRICE ? bumped : MIN_GAS_PRICE;
+      // Add a tiny per-click salt (≤ 0.1 gwei) so consecutive demo clicks
+      // produce different payloads → different SigRequest PDAs. Without this,
+      // a second click with the same nonce hits "Allocate: account already
+      // in use" on-chain because the SigRequest PDA is seeded by payload.
+      const salt = BigInt(Math.floor(Math.random() * 100_000_000));
+      const gasPrice = baseGasPrice + salt;
       const valueWei = 100_000_000_000_000n; // 0.0001 ETH
       const valueWeiBe = bigintToBe(valueWei, 16);
       const gasLimit = 21_000n;
