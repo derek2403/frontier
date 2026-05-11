@@ -10,12 +10,44 @@ export type TimelineState = {
   broadcastEth: Step;
 };
 
-const STEPS: Array<{ key: keyof TimelineState; label: string; sub: string }> = [
-  { key: "signEthTransfer", label: "Solana: sign_eth_transfer", sub: "eth_demo builds RLP, CPIs SODA" },
-  { key: "sigRequested",    label: "SigRequested emitted",      sub: "request stored in PDA" },
-  { key: "signOffChain",    label: "Off-chain ECDSA sign",      sub: "k256 signs payload with tweaked SK" },
-  { key: "finalizeOnChain", label: "Solana: finalize_signature", sub: "secp256k1_recover verifies on-chain" },
-  { key: "broadcastEth",    label: "Broadcast to Sepolia",       sub: "eth_sendRawTransaction" },
+const STEPS: Array<{
+  key: keyof TimelineState;
+  label: string;
+  sub: string;
+  details?: string[];
+}> = [
+  {
+    key: "signEthTransfer",
+    label: "Solana: sign_eth_transfer",
+    sub: "Phantom signs · eth_demo builds RLP and CPIs SODA",
+  },
+  {
+    key: "sigRequested",
+    label: "SigRequested emitted",
+    sub: "SigRequest PDA created on-chain",
+  },
+  {
+    key: "signOffChain",
+    label: "MPC committee · 2-of-2 Lindell '17",
+    sub: "Coordinator drives a 4-message protocol between P1 and P2",
+    details: [
+      "1. P1 → message1   (commitment to k1·G)",
+      "2. P2 → message2   (k2·G + Schnorr proof)",
+      "3. P1 → message3   (open commit + Schnorr proof)",
+      "4. P2 → message4   (Paillier-homomorphic partial sig)",
+      "P1 decrypts, finalizes (r, s, recovery_id)",
+    ],
+  },
+  {
+    key: "finalizeOnChain",
+    label: "Solana: finalize_signature",
+    sub: "secp256k1_recover verifies the MPC sig matches stored foreign_pk_xy",
+  },
+  {
+    key: "broadcastEth",
+    label: "Broadcast to Sepolia",
+    sub: "eth_sendRawTransaction",
+  },
 ];
 
 function dot(step: Step) {
@@ -44,6 +76,13 @@ export default function Timeline({ state }: { state: TimelineState }) {
                   {s.label}
                 </div>
                 <div className="text-xs text-zinc-500">{s.sub}</div>
+                {s.details && step !== "idle" ? (
+                  <ul className="mt-2 space-y-0.5 rounded-lg bg-zinc-950/60 px-3 py-2 font-mono text-[11px] text-emerald-300/70">
+                    {s.details.map((d) => (
+                      <li key={d}>{d}</li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             </li>
           );

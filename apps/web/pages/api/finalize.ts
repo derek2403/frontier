@@ -14,6 +14,8 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
+  Transaction,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import {
   bigintToBe,
@@ -121,11 +123,39 @@ export default async function handler(
     // derivation_seeds, chain_tag). We use these to compute the SODA tweak
     // and to know which payload the MPC committee should sign.
     const serverWallet = loadServerWallet();
-    const provider = new AnchorProvider(
-      connection,
-      { publicKey: serverWallet.publicKey, payer: serverWallet } as unknown as Wallet,
-      { commitment: "confirmed" },
-    );
+    // Build an Anchor-compatible Wallet wrapper around our Keypair.
+    // Anchor's AnchorProvider calls wallet.signTransaction(tx) when .rpc()
+    // runs, so it needs more than just { publicKey } — it needs an actual
+    // signer.
+    const anchorWallet: Wallet = {
+      publicKey: serverWallet.publicKey,
+      payer: serverWallet,
+      signTransaction: async <T extends Transaction | VersionedTransaction>(
+        tx: T,
+      ): Promise<T> => {
+        if (tx instanceof VersionedTransaction) {
+          tx.sign([serverWallet]);
+        } else {
+          tx.partialSign(serverWallet);
+        }
+        return tx;
+      },
+      signAllTransactions: async <T extends Transaction | VersionedTransaction>(
+        txs: T[],
+      ): Promise<T[]> => {
+        for (const tx of txs) {
+          if (tx instanceof VersionedTransaction) {
+            tx.sign([serverWallet]);
+          } else {
+            tx.partialSign(serverWallet);
+          }
+        }
+        return txs;
+      },
+    };
+    const provider = new AnchorProvider(connection, anchorWallet, {
+      commitment: "confirmed",
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sodaProgram = new Program(sodaIdl as any, provider);
 

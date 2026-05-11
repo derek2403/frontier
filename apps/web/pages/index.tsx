@@ -446,11 +446,11 @@ export default function Home() {
               {/* Solana side */}
               <div className="space-y-2">
                 <div className="text-xs uppercase tracking-wider text-emerald-300/70">
-                  Solana · finalize_signature
+                  Solana · finalize_signature (Helius XRAY)
                 </div>
                 <div className="rounded-lg bg-white p-3">
                   <QRCodeSVG
-                    value={`https://solscan.io/tx/${result.finalizeSignatureTx}?cluster=devnet`}
+                    value={`https://xray.helius.xyz/tx/${result.finalizeSignatureTx}?network=devnet`}
                     size={160}
                     bgColor="#ffffff"
                     fgColor="#000000"
@@ -459,7 +459,7 @@ export default function Home() {
                   />
                 </div>
                 <a
-                  href={`https://solscan.io/tx/${result.finalizeSignatureTx}?cluster=devnet`}
+                  href={`https://xray.helius.xyz/tx/${result.finalizeSignatureTx}?network=devnet`}
                   target="_blank"
                   rel="noreferrer"
                   className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
