@@ -40,12 +40,15 @@ soda::request_signature(
 </Callout>
 
 <Callout type="default">
-  **New in v0.5 (2026-05-11):** real Lindell '17 2-of-2 MPC ECDSA. Two
-  off-chain nodes hold additive shares; neither sees the joint secret;
-  signing runs the 4-message protocol and produces a normal ECDSA sig
-  that the on-chain `secp256k1_recover` verifies unchanged. See
-  [Architecture](/architecture#v05-real-lindell-17-2-of-2-mpc-ecdsa) and
-  [Deploy → AWS MPC](/deploy/aws-mpc).
+  **Live on AWS (2026-05-11):** real Lindell '17 2-of-2 MPC ECDSA running
+  across three EC2 instances in us-east-1. Two `mpc-node` peers hold the
+  additive shares; an `mpc-coordinator` at
+  [`http://32.198.7.34:8000`](http://32.198.7.34:8000/health) drives the
+  4-message protocol. Neither node sees the joint secret. The on-chain
+  `Committee.group_pk` is migrated to the AWS joint key, so the same
+  `./demo.sh` now signs through MPC end-to-end. See
+  [Architecture](/architecture#v05-real-lindell-17-2-of-2-mpc-ecdsa)
+  and the [MPC protocol walkthrough](/concepts/mpc-protocol).
 </Callout>
 
 ## Install the SDK

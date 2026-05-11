@@ -121,15 +121,24 @@ Source-only ESM workspace package. Exports derivation, RLP encode / decode,
 EIP-155 `v` calculation, and an `EthRpc` client. Consumed by the demo CLI,
 the web app, and the relayer via `workspace:*`.
 
-## v0.5: real Lindell '17 2-of-2 MPC ECDSA
+## v0.5: real Lindell '17 2-of-2 MPC ECDSA — live on AWS
 
-As of 2026-05-11 you can run the demo against a real threshold ECDSA
-committee instead of the single-key signer. Two `apps/mpc-node` services
-hold additive shares (`x1`, `x2`) such that `x1 + x2 = group_sk`; neither
-node sees the joint secret. Signing runs the 4-message Lindell '17
-protocol, orchestrated by `apps/mpc-coordinator` which only forwards
-opaque protocol bytes (so its compromise = denial of service, not key
-theft).
+As of 2026-05-11 the demo runs against a real threshold ECDSA committee
+deployed across **three EC2 instances in us-east-1**:
+
+| Role | Public IP | Holds |
+| --- | --- | --- |
+| `mpc-node-p1` | `44.201.168.181` | share `x1` |
+| `mpc-node-p2` | `54.88.35.104` | share `x2` |
+| `mpc-coordinator` | `32.198.7.34` ([health](http://32.198.7.34:8000/health)) | nothing — only forwards bytes |
+
+The on-chain `Committee.group_pk` was migrated from the v0 single key to
+the AWS joint key via the new
+[`update_committee` ix](/reference/soda-program#update_committee).
+`./demo.sh` now drives signing through the AWS coordinator without any
+flag changes. Neither node sees the joint secret. Signing runs the
+4-message Lindell '17 protocol; on-chain
+`secp256k1_recover` verifies the result unchanged.
 
 ```
 caller program → request_signature → SigRequested
