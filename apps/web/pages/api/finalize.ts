@@ -76,10 +76,28 @@ function solanaRpc(): string {
 }
 
 function loadServerWallet(): Keypair {
+  // 1. Vercel / production: keypair JSON inlined in env var.
+  //    Set ANCHOR_WALLET_JSON to the contents of ~/.config/solana/id.json
+  //    (a 64-element JSON array of bytes).
+  const inline = process.env.ANCHOR_WALLET_JSON;
+  if (inline) {
+    try {
+      const bytes = Uint8Array.from(JSON.parse(inline));
+      return Keypair.fromSecretKey(bytes);
+    } catch (e) {
+      throw new Error(
+        `ANCHOR_WALLET_JSON env var is set but not parseable as a 64-byte JSON array: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  // 2. Local dev: read from disk.
   const path =
     process.env.ANCHOR_WALLET ?? `${homedir()}/.config/solana/id.json`;
   if (!existsSync(path)) {
-    throw new Error(`server wallet missing at ${path}`);
+    throw new Error(
+      `server wallet missing at ${path}. Either set ANCHOR_WALLET to a different path, or set ANCHOR_WALLET_JSON to the keypair's JSON array (required on Vercel / serverless).`,
+    );
   }
   return Keypair.fromSecretKey(
     Uint8Array.from(JSON.parse(readFileSync(path, "utf-8"))),
