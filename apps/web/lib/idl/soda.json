@@ -1,0 +1,14 @@
+{
+  "address": "REPLACE_WITH_REAL_SODA_PROGRAM_ID",
+  "metadata": {
+    "name": "soda",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "STUB IDL. Replace the contents of this file with the output of `anchor build` from contracts/target/idl/soda.json before any production deploy. The web app will load and render with this stub, but any call into the soda program will throw at runtime."
+  },
+  "instructions": [],
+  "accounts": [],
+  "events": [],
+  "errors": [],
+  "types": []
+}

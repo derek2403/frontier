@@ -1,0 +1,14 @@
+{
+  "address": "REPLACE_WITH_REAL_ETH_DEMO_PROGRAM_ID",
+  "metadata": {
+    "name": "eth_demo",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "STUB IDL. Replace the contents of this file with the output of `anchor build` from contracts/target/idl/eth_demo.json before any production deploy. The web app will load and render with this stub, but any call into the eth_demo program will throw at runtime."
+  },
+  "instructions": [],
+  "accounts": [],
+  "events": [],
+  "errors": [],
+  "types": []
+}

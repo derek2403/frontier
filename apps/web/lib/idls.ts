@@ -1,8 +1,12 @@
-// Anchor IDLs for the deployed programs. Imported from the contracts target/idl
-// directory so a fresh `anchor build` updates the types here automatically.
+// Anchor IDLs for the deployed programs.
+//
+// These are committed under apps/web/lib/idl/ (not contracts/target/) so Vercel
+// can resolve them without running `anchor build`. The files are stubs by default;
+// refresh them from `contracts/target/idl/` after each anchor build. See
+// ./idl/README.md for the refresh procedure.
 
-import sodaIdl from "../../../contracts/target/idl/soda.json";
-import ethDemoIdl from "../../../contracts/target/idl/eth_demo.json";
+import sodaIdl from "./idl/soda.json";
+import ethDemoIdl from "./idl/eth_demo.json";
 
 export { sodaIdl, ethDemoIdl };
 
