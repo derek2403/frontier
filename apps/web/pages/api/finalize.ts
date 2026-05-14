@@ -188,7 +188,10 @@ export default async function handler(
     // the only consistent path is sign-for-group_pk-directly. Per-PDA
     // foreign addresses are a v1 task. The frontend stored foreign_pk_xy =
     // group_pk_xy, so MPC signing for group_pk produces a matching sig.
-    const MPC_URL = process.env.MPC_COORDINATOR_URL;
+    // Strip any trailing slashes the operator added in the env var — Fastify
+    // on the coordinator treats `//sign` as a different route from `/sign`
+    // and 404s, which is silent-looking. Defensive normalization.
+    const MPC_URL = (process.env.MPC_COORDINATOR_URL ?? "").replace(/\/+$/, "");
     if (!MPC_URL) {
       return res.status(500).json({ error: "MPC_COORDINATOR_URL not set" });
     }
