@@ -27,8 +27,17 @@
 #   - Free instances sleep after 15 idle minutes and take about a minute to
 #     wake. Pre-warm with `bash scripts/warm-mpc-render.sh` before a demo.
 #
-# To upgrade later: give the nodes `plan: starter` and `type: pserv`, then
-# point the coordinator at their private http:// addresses.
+# Spending credit: Render prorates compute by the second, so upgrade all
+# three to `plan: starter` for the demo window rather than paying for one
+# service all month. Cold start hits every service that sleeps, so paying
+# for one of three fixes nothing. Three Starters cost $21/month, which is
+# $0.69/day — about 10 days on $7 of credit. Starter is also 0.5 CPU
+# against Free's 0.1, which takes a sign from a few seconds back to ~400ms,
+# and paid instances stop consuming the 750 free instance-hours.
+#
+# For AWS-style isolation: give the nodes `plan: starter` AND
+# `type: pserv`, then point the coordinator at their private http://
+# addresses. That costs $14/month for the two nodes.
 
 services:
   - name: soda-mpc-node-p1

@@ -239,6 +239,35 @@ bash scripts/warm-mpc-render.sh
 three services. The coordinator also pre-warms both peers in parallel at the
 start of every `/sign`. Set `MPC_PREWARM_PEERS=0` to turn that off.
 
+## If you have Render credit
+
+Render prorates compute by the second. Use credit on the demo window, not on
+one service all month.
+
+Do not upgrade only one of the three services. Cold start hits every service
+that sleeps, so two sleeping nodes still make the first signature slow.
+
+| Setup | Cost | First sign after idle |
+|---|---|---|
+| 3 × Free | $0 | 1 to 2 minutes |
+| 3 × Starter | $21/month, or $0.69/day | Never sleeps, about 400 ms |
+
+$7 of credit runs all three on Starter for about 10 days. Starter also gives
+0.5 CPU against Free's 0.1, and paid instances do not consume the 750 free
+instance-hours.
+
+1. Build and test on Free. This costs nothing.
+2. Switch all three to Starter one day before the demo.
+3. Switch them back to Free afterwards.
+
+Change the plan under **Settings → Instance Type** on each service. The URL
+does not change, and a web service redeploys with no downtime.
+
+<Callout type="warning">
+  Keep a payment method on file. When the credit runs out, Render suspends
+  paid services.
+</Callout>
+
 ## Watch the free-tier quota
 
 Render gives each workspace 750 free instance hours per calendar month.
