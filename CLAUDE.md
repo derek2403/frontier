@@ -526,6 +526,85 @@ bash scripts/deploy-mpc-aws.sh
   console edits (see "Security group rules added"). Worth scripting via AWS CLI
   next time.
 
+## Render MPC deployment — added 2026-09-05
+
+Second deployment target for the same three services, alongside AWS. Free
+plan, no servers to manage. See `apps/docs/pages/deploy/render-mpc.mdx` for
+the click-by-click steps and `render.yaml` for the Blueprint.
+
+### What changed in the code
+
+Render's free plan has no private services, and a free web service can send
+private-network requests but cannot receive them. So the two nodes get
+**public** URLs and the coordinator calls them over the public internet.
+Security groups no longer protect the nodes, so the nodes now authenticate
+the caller themselves:
+
+- `mpc-node`: `MPC_AUTH_TOKEN` gates `/sign/init` and `/sign/step`.
+  `/health` stays open for platform health checks. Unset = open, so local
+  `pnpm dev` and `docker compose` are unchanged.
+- `mpc-coordinator`: `MPC_NODE_AUTH_TOKEN` is presented to the nodes,
+  `MPC_AUTH_TOKEN` is required from its own callers.
+- Callers send `MPC_COORDINATOR_TOKEN`: `apps/mpc-subscriber`,
+  `apps/demo/src/demo.ts`, `apps/web/lib/run-demo.ts`,
+  `apps/web/pages/api/finalize.ts`.
+
+Two Render-specific fixes in the coordinator:
+
+- **`/health` uses a separate undici Agent** with a 5s timeout
+  (`MPC_HEALTH_TIMEOUT_MS`). It previously shared the 150s signing agent, so
+  an asleep peer made `/health` take 135s and Render would fail the deploy's
+  health check. Verified: 135s → 5.5s with both peers unreachable.
+  An `AbortSignal` does **not** fix this — it does not interrupt undici's
+  TCP connect phase. The Agent's `connect.timeout` is what bounds it.
+- **`/sign` pre-warms both peers in parallel** before message 1
+  (`MPC_PREWARM_PEERS=0` disables). The protocol touches P1, P2, P1, P2, P1
+  in order, so two sleeping instances would otherwise cold-start serially.
+
+### Free-plan trade-offs
+
+- Instances sleep after 15 idle minutes, ~1 min to wake. Run
+  `scripts/warm-mpc-render.sh` before a demo.
+- 750 free instance hours per workspace per month. Three always-awake
+  services would need ~2160. The sleeping is what keeps you in quota — do
+  not add an uptime pinger.
+- A free instance gets 0.1 CPU. Signing is a few seconds, versus ~400ms on
+  the AWS `t3.small`.
+
+### Verified locally before deploying (2026-09-05)
+
+Both images built and run as containers wired the way Render wires them
+(share as a Secret File at `/etc/secrets/share-pN.json`, `PORT` injected):
+
+- node rejects no-token and wrong-token with 401; coordinator likewise
+- coordinator `/sign` with the token returns `{r,s,v}` in ~390ms
+- signature verifies against `group_pk` and recovers to it, low-s
+
+New DKG run on 2026-09-05 (the laptop had no shares):
+```
+group_pk.x = 9e4c1ac3a50367eefb5d05d1a18620037b20f2f52fc434bb7c7363081e21c5c5
+group_pk.y = 4794e02a20818171fd56a67d5e4baaee71ad96f624a59272b9d7955b47af9fb1
+```
+This is a **different key** from the AWS committee, so `pnpm
+mpc:update-committee` must run before the Solana side will accept these
+signatures.
+
+### Confirmed bug: `tweakHex` is silently ignored
+
+Measured this session, not just inferred. A `/sign` with
+`tweakHex=0…02` returns a signature that recovers to plain `group_pk`, not
+to `group_pk + 2·G`. The node returns HTTP 200, so it looks like it worked.
+
+Cause: `applyTweakP1` edits P1's local `x1`, but P2 holds `cypher_x1`, a
+Paillier encryption of `x1` fixed at DKG time. P1 derives the final `s` from
+that ciphertext, so the local edit has no effect.
+
+`apps/web/pages/api/finalize.ts:185` already documents and works around this
+by sending no tweak. **`apps/mpc-subscriber` does not** — it sends a real
+tweak, so the signature it submits fails the `foreign_pk_xy` comparison in
+`finalize_signature`. Fixing this needs a tweakable protocol (GG20 / CGG21),
+which is the same v1 work already tracked above.
+
 ## What's next (handed off)
 
 1. **`anchor build`** to generate the program IDL at `contracts/target/idl/soda.json`.

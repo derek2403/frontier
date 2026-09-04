@@ -44,8 +44,11 @@ const SOLANA_RPC =
   process.env.SOLANA_RPC_URL ??
   process.env.SOLANA_DEVNET_RPC_URL ??
   'http://127.0.0.1:8899'
-const COORDINATOR_URL =
+const COORDINATOR_URL = (
   process.env.MPC_COORDINATOR_URL ?? 'http://127.0.0.1:8000'
+).replace(/\/+$/, '')
+// Bearer token the coordinator requires when it runs on a public host.
+const COORDINATOR_TOKEN = process.env.MPC_COORDINATOR_TOKEN ?? ''
 const ANCHOR_WALLET =
   process.env.ANCHOR_WALLET ?? `${homedir()}/.config/solana/id.json`
 
@@ -254,9 +257,11 @@ async function handleSigRequested(
 }
 
 async function postJson(url: string, body: unknown): Promise<any> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (COORDINATOR_TOKEN) headers.authorization = `Bearer ${COORDINATOR_TOKEN}`
   const res = await request(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   })
   if (res.statusCode >= 400) {

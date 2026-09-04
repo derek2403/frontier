@@ -1,0 +1,283 @@
+---
+title: Deploy MPC committee to Render
+description: Run the SODA 2-of-2 MPC committee on Render — two mpc-node web services plus a coordinator, on the free plan.
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Deploy the MPC committee to Render
+
+This page runs the SODA v0.5 MPC stack on Render. You create three web
+services: `mpc-node-p1`, `mpc-node-p2` and `mpc-coordinator`. The free plan
+is enough for a demo.
+
+Use [Deploy MPC to AWS](/deploy/aws-mpc) instead if you need cross-region
+nodes or instances that never sleep.
+
+<Callout type="warning">
+  On Render's free plan the two nodes get **public** URLs. Render's free web
+  services cannot receive private-network traffic, so the coordinator must
+  call the nodes over the public internet. A bearer token is therefore
+  mandatory, not optional. Without it, anyone who finds a node URL can run
+  the protocol and get a valid committee signature on any payload.
+</Callout>
+
+## How Render differs from AWS
+
+| Concern | AWS | Render free plan |
+|---|---|---|
+| Node isolation | Security groups allow only the coordinator's private IP | Public URL plus `MPC_AUTH_TOKEN` |
+| Share storage | `scp` to `/data/share-pN.json` | Secret File at `/etc/secrets/share-pN.json` |
+| Availability | Always on | Sleeps after 15 idle minutes, wakes in about 1 minute |
+| Warm sign time | About 400 ms | A few seconds — a free instance gets 0.1 CPU |
+| Cost | Three `t3.small` | $0 |
+
+<Callout type="info">
+  Private services (`type: pserv`) are never free on Render. If you want the
+  AWS isolation model, put the two nodes on a paid plan as private services
+  and keep only the coordinator public.
+</Callout>
+
+## Architecture
+
+```
+   subscriber / web / demo
+            │  POST /sign   (Authorization: Bearer <coordinator token>)
+            ▼
+   ┌──────────────────────┐
+   │ soda-mpc-coordinator │  public web service
+   │ holds no share       │
+   └───────┬──────────────┘
+           │  HTTPS + Bearer <node token>
+     ┌─────┴──────┐
+     ▼            ▼
+┌──────────┐  ┌──────────┐
+│ node p1  │  │ node p2  │  public web services
+│ share P1 │  │ share P2 │  share mounted at /etc/secrets
+└──────────┘  └──────────┘
+```
+
+The coordinator never holds a share. It only forwards opaque protocol bytes.
+Compromise of the coordinator gives denial of service, not key theft.
+
+## Before you start
+
+1. Generate the shares on your laptop:
+
+   ```bash
+   pnpm install
+   pnpm mpc:dkg
+   ```
+
+   This writes `apps/mpc-node/shares/share-p1.json` and `share-p2.json`.
+   It also prints the joint `group_pk`. Keep that output.
+
+2. Generate two random tokens:
+
+   ```bash
+   node -e "const c=require('node:crypto');
+   console.log('node  token:', c.randomBytes(32).toString('base64url'));
+   console.log('coord token:', c.randomBytes(32).toString('base64url'))"
+   ```
+
+<Steps>
+
+### Create `soda-mpc-node-p1`
+
+In the Render dashboard select **New → Web Service**, then pick your repo.
+
+| Field | Value |
+|---|---|
+| Name | `soda-mpc-node-p1` |
+| Language | `Docker` |
+| Root Directory | *(leave empty)* |
+| Dockerfile Path | `apps/mpc-node/Dockerfile` |
+| Instance Type | `Free` |
+| Health Check Path | `/health` |
+
+Add these environment variables:
+
+```
+MPC_ROLE=p1
+PORT=8001
+MPC_SHARE_PATH=/etc/secrets/share-p1.json
+MPC_AUTH_TOKEN=<node token>
+```
+
+Add a **Secret File** named `share-p1.json`. Paste the whole contents of
+`apps/mpc-node/shares/share-p1.json`. Render mounts it at
+`/etc/secrets/share-p1.json`.
+
+### Create `soda-mpc-node-p2`
+
+Repeat the previous step with these differences:
+
+| Field | Value |
+|---|---|
+| Name | `soda-mpc-node-p2` |
+| Dockerfile Path | `apps/mpc-node/Dockerfile` |
+
+```
+MPC_ROLE=p2
+PORT=8002
+MPC_SHARE_PATH=/etc/secrets/share-p2.json
+MPC_AUTH_TOKEN=<the same node token>
+```
+
+Secret File `share-p2.json` holds `apps/mpc-node/shares/share-p2.json`.
+
+<Callout type="warning">
+  Give p1 the p1 share and p2 the p2 share. The node compares `MPC_ROLE`
+  against the `role` field in the share file and refuses to start on a
+  mismatch.
+</Callout>
+
+### Create `soda-mpc-coordinator`
+
+| Field | Value |
+|---|---|
+| Name | `soda-mpc-coordinator` |
+| Language | `Docker` |
+| Dockerfile Path | `apps/mpc-coordinator/Dockerfile` |
+| Instance Type | `Free` |
+| Health Check Path | `/health` |
+
+```
+PORT=8000
+MPC_NODE_P1_URL=https://soda-mpc-node-p1.onrender.com
+MPC_NODE_P2_URL=https://soda-mpc-node-p2.onrender.com
+MPC_NODE_AUTH_TOKEN=<node token>
+MPC_AUTH_TOKEN=<coordinator token>
+```
+
+Use the real URLs Render shows on each node service.
+
+### Check the committee
+
+```bash
+curl https://soda-mpc-coordinator.onrender.com/health
+```
+
+Both peers must report the same `groupPkXY`:
+
+```json
+{"ok":true,"peers":{
+  "p1":{"ok":true,"role":"p1","groupPkXY":{"x":"9e4c1ac3…","y":"4794e02a…"}},
+  "p2":{"ok":true,"role":"p2","groupPkXY":{"x":"9e4c1ac3…","y":"4794e02a…"}}}}
+```
+
+Confirm the nodes reject strangers:
+
+```bash
+curl -o /dev/null -w '%{http_code}\n' -X POST \
+  https://soda-mpc-node-p1.onrender.com/sign/init \
+  -H 'content-type: application/json' -d '{}'
+# 401
+```
+
+Then take a real signature:
+
+```bash
+curl -X POST https://soda-mpc-coordinator.onrender.com/sign \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer $MPC_COORDINATOR_TOKEN" \
+  -d '{"payloadHex":"0000000000000000000000000000000000000000000000000000000000000001"}'
+# {"r":"…","s":"…","v":0}
+```
+
+### Point the on-chain committee at the new key
+
+The DKG produced a new joint key, so the `Committee` PDA still holds the old
+one. Update it:
+
+```bash
+cd contracts && anchor build && cd ..
+ANCHOR_WALLET=~/.config/solana/id.json \
+SOLANA_DEVNET_RPC_URL=https://api.devnet.solana.com \
+pnpm mpc:update-committee
+```
+
+The wallet must be the `Committee.authority` that called `init_committee`.
+
+### Wire the callers
+
+Every caller of the coordinator now needs the token.
+
+```bash
+MPC_COORDINATOR_URL=https://soda-mpc-coordinator.onrender.com
+MPC_COORDINATOR_TOKEN=<coordinator token>
+```
+
+Set both in the repo `.env` for `pnpm mpc:subscribe` and `./demo.sh`, and in
+the Vercel project environment for `apps/web`.
+
+### Delete the local shares
+
+Once the nodes work, remove the copies on your laptop:
+
+```bash
+rm -P apps/mpc-node/shares/share-p1.json apps/mpc-node/shares/share-p2.json
+```
+
+After this, no single host holds both shares. That is the property MPC is
+supposed to give you.
+
+</Steps>
+
+## Before a demo, warm the committee
+
+A free instance sleeps after 15 idle minutes. The first sign after a sleep
+can take two minutes, which looks broken on stage.
+
+```bash
+MPC_COORDINATOR_URL=https://soda-mpc-coordinator.onrender.com \
+MPC_COORDINATOR_TOKEN=<coordinator token> \
+bash scripts/warm-mpc-render.sh
+```
+
+`GET /health` fans out to both nodes in parallel, so one call wakes all
+three services. The coordinator also pre-warms both peers in parallel at the
+start of every `/sign`. Set `MPC_PREWARM_PEERS=0` to turn that off.
+
+## Watch the free-tier quota
+
+Render gives each workspace 750 free instance hours per calendar month.
+Three always-awake services use about 2160 hours. The sleep behaviour is
+what keeps you inside the quota, so do not add an uptime pinger to all three
+services. If you exceed the quota, Render suspends every free web service
+until the next month.
+
+## Known limit: `tweakHex` does not work
+
+The coordinator accepts a `tweakHex` argument, but the committee ignores it.
+A tweaked request returns a signature that recovers to plain `group_pk`, not
+to `group_pk + tweak·G`.
+
+The cause is in the Lindell '17 protocol, not in the deployment. P2 holds
+`cypher_x1`, a Paillier encryption of P1's share made during the DKG. P1
+computes the final `s` from that ciphertext, so editing P1's local `x1`
+before signing changes nothing.
+
+Two consequences:
+
+- `apps/web` already works around this. It sends no tweak and stores
+  `foreign_pk_xy = group_pk_xy`, so one Solana address maps to one Ethereum
+  address.
+- `apps/mpc-subscriber` does send a real tweak. The signature it gets back
+  fails the on-chain `foreign_pk_xy` comparison in `finalize_signature`.
+
+Per-PDA foreign addresses under MPC need a protocol that supports key
+tweaking, such as GG20 or CGG21. That is v1 work.
+
+## Trust caveats
+
+These are the same as the AWS deployment, plus one:
+
+- 2-of-2 has zero fault tolerance. Both nodes must be up to sign.
+- Both nodes run under one Render account. Real decentralization needs
+  different operators.
+- Shares sit in Render Secret Files as plaintext. Production wants a Nitro
+  Enclave or a KMS wrap.
+- **New on Render:** the nodes are reachable from the public internet. A
+  leaked `MPC_AUTH_TOKEN` is equivalent to a leaked signing key. Rotate it
+  by editing the variable on all three services.

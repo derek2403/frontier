@@ -1,0 +1,95 @@
+# SODA MPC committee on Render — two mpc-node peers plus one coordinator.
+#
+# Use this Blueprint (Render Dashboard -> New -> Blueprint) instead of
+# creating the three services by hand. Render prompts for every value marked
+# `sync: false`, so no secret is committed here.
+#
+# AFTER the Blueprint runs, two manual steps remain, because Render's
+# Blueprint spec cannot express either one:
+#
+#   1. Upload the share files. For each node service open
+#      Settings -> Secret Files and add:
+#         soda-mpc-node-p1  ->  share-p1.json   (paste apps/mpc-node/shares/share-p1.json)
+#         soda-mpc-node-p2  ->  share-p2.json   (paste apps/mpc-node/shares/share-p2.json)
+#      Render mounts them at /etc/secrets/<name>, which is what
+#      MPC_SHARE_PATH below points at.
+#
+#   2. Set MPC_NODE_P1_URL / MPC_NODE_P2_URL on the coordinator to the two
+#      node URLs Render assigns (https://soda-mpc-node-p1.onrender.com).
+#      `fromService` can return a host but cannot prepend the scheme.
+#
+# Free-tier notes:
+#   - Free instances exist only for web services, so all three are `web`.
+#     Private services (type: pserv) always cost money.
+#   - A free web service can SEND private-network requests but cannot RECEIVE
+#     them, so the coordinator must reach the nodes over their public HTTPS
+#     URLs. MPC_AUTH_TOKEN is what stops anyone else from doing the same.
+#   - Free instances sleep after 15 idle minutes and take about a minute to
+#     wake. Pre-warm with `bash scripts/warm-mpc-render.sh` before a demo.
+#
+# To upgrade later: give the nodes `plan: starter` and `type: pserv`, then
+# point the coordinator at their private http:// addresses.
+
+services:
+  - name: soda-mpc-node-p1
+    type: web
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/mpc-node/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: MPC_ROLE
+        value: p1
+      - key: PORT
+        value: "8001"
+      - key: MPC_SHARE_PATH
+        value: /etc/secrets/share-p1.json
+      # Must match MPC_NODE_AUTH_TOKEN on the coordinator.
+      - key: MPC_AUTH_TOKEN
+        sync: false
+
+  - name: soda-mpc-node-p2
+    type: web
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/mpc-node/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: MPC_ROLE
+        value: p2
+      - key: PORT
+        value: "8002"
+      - key: MPC_SHARE_PATH
+        value: /etc/secrets/share-p2.json
+      - key: MPC_AUTH_TOKEN
+        sync: false
+
+  - name: soda-mpc-coordinator
+    type: web
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/mpc-coordinator/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "8000"
+      # https://soda-mpc-node-p1.onrender.com — fill in after the nodes exist.
+      - key: MPC_NODE_P1_URL
+        sync: false
+      - key: MPC_NODE_P2_URL
+        sync: false
+      # Presented to the nodes. Must equal their MPC_AUTH_TOKEN.
+      - key: MPC_NODE_AUTH_TOKEN
+        sync: false
+      # Required from callers of this coordinator (subscriber, demo, web).
+      - key: MPC_AUTH_TOKEN
+        sync: false

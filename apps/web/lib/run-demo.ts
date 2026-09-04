@@ -266,7 +266,8 @@ export async function runDemo(
 
   // 6. Off-chain signing — MPC if configured, otherwise local k256.
   onEvent({ kind: "step", name: "signOffChain", status: "active" });
-  const MPC_URL = process.env.MPC_COORDINATOR_URL;
+  const MPC_URL = process.env.MPC_COORDINATOR_URL?.replace(/\/+$/, "");
+  const MPC_TOKEN = process.env.MPC_COORDINATOR_TOKEN;
   let sigBytes: Uint8Array;
   let recoveryId: number;
   if (MPC_URL) {
@@ -277,7 +278,10 @@ export async function runDemo(
     });
     const res = await fetch(`${MPC_URL}/sign`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
+      },
       body: JSON.stringify({
         payloadHex: Buffer.from(payload).toString("hex"),
         tweakHex: Buffer.from(tweak).toString("hex"),

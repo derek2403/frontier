@@ -19,6 +19,7 @@
 import Fastify from 'fastify'
 import pkg from '@safeheron/two-party-ecdsa-js'
 import BN from 'bn.js'
+import { timingSafeEqual } from 'node:crypto'
 import { loadShare, type Role } from './share.js'
 import { setSession, getSession, dropSession } from './sessions.js'
 
@@ -39,7 +40,33 @@ if (share.role !== ROLE) {
   )
 }
 
+/**
+ * Shared secret between the coordinator and this node.
+ *
+ * On AWS the nodes were protected by security groups: only the coordinator's
+ * private IP could reach port 8001 / 8002. Platforms that give every service
+ * a public URL (Render's free tier, Fly, Railway) have no such filter, so the
+ * node must authenticate the caller itself. Without this, anyone who finds
+ * the URL can run the protocol and get a valid committee signature on any
+ * payload they choose.
+ *
+ * Unset = open. That keeps `docker compose -f docker-compose.mpc.yml up` and
+ * local `pnpm dev` working with no configuration. The startup log says so.
+ */
+const AUTH_TOKEN = process.env.MPC_AUTH_TOKEN ?? ''
+
 const app = Fastify({ logger: { level: 'info' } })
+
+app.addHook('onRequest', async (req, reply) => {
+  if (!AUTH_TOKEN) return
+  // Render polls the health check without credentials, and the response only
+  // contains the group public key, which is already on-chain.
+  if (req.url.split('?')[0] === '/health') return
+  if (!bearerMatches(req.headers.authorization)) {
+    app.log.warn({ url: req.url, ip: req.ip }, 'rejected unauthenticated request')
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+})
 
 app.get('/health', async () => ({
   ok: true,
@@ -170,7 +197,26 @@ app.post<{
 })
 
 await app.listen({ host: '0.0.0.0', port: PORT })
-app.log.info({ role: ROLE, port: PORT }, 'mpc-node ready')
+app.log.info({ role: ROLE, port: PORT, authenticated: !!AUTH_TOKEN }, 'mpc-node ready')
+if (!AUTH_TOKEN) {
+  app.log.warn(
+    'MPC_AUTH_TOKEN is not set — /sign is open to any caller. ' +
+      'Set it on any host that has a public address.',
+  )
+}
+
+/**
+ * Constant-time compare of an `Authorization: Bearer <token>` header against
+ * the configured token. `timingSafeEqual` throws on a length mismatch, so
+ * compare lengths first and accept the leak of the token's length.
+ */
+function bearerMatches(header: string | undefined): boolean {
+  if (!header) return false
+  const want = Buffer.from(`Bearer ${AUTH_TOKEN}`)
+  const got = Buffer.from(header)
+  if (got.length !== want.length) return false
+  return timingSafeEqual(got, want)
+}
 
 /**
  * Apply SODA tweak to P1's share so the resulting signature recovers to

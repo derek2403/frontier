@@ -195,9 +195,13 @@ export default async function handler(
     if (!MPC_URL) {
       return res.status(500).json({ error: "MPC_COORDINATOR_URL not set" });
     }
+    const MPC_TOKEN = process.env.MPC_COORDINATOR_TOKEN;
     const mpcRes = await fetch(`${MPC_URL}/sign`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
+      },
       body: JSON.stringify({
         payloadHex: Buffer.from(payload).toString("hex"),
       }),
