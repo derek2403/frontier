@@ -239,6 +239,48 @@ bash scripts/warm-mpc-render.sh
 three services. The coordinator also pre-warms both peers in parallel at the
 start of every `/sign`. Set `MPC_PREWARM_PEERS=0` to turn that off.
 
+## Single-service mode
+
+`Dockerfile.mpc-aio` runs p1, p2 and the coordinator in one container, under
+the supervisor at `scripts/mpc-all-in-one.mjs`. You then create one Render
+web service instead of three.
+
+<Callout type="error">
+  This puts both shares on one filesystem. Anyone who reaches inside the
+  container can rebuild the joint secret, so the committee becomes a
+  single-key signer running a protocol. Use it for a demo, and do not claim
+  the 2-of-2 property while you do. The three-service setup above is what
+  makes that claim true.
+</Callout>
+
+Only the coordinator listens on the platform's `$PORT`. Both nodes bind
+loopback ports that Render does not route, and the supervisor mints a random
+per-boot token that the nodes require, so you never configure one.
+
+| Field | Value |
+|---|---|
+| Name | `soda-mpc` |
+| Language | `Docker` |
+| Dockerfile Path | `Dockerfile.mpc-aio` |
+| Instance Type | `Free` |
+| Health Check Path | `/health` |
+
+One environment variable:
+
+```
+MPC_AUTH_TOKEN=<coordinator token>
+```
+
+Two Secret Files, `share-p1.json` and `share-p2.json`.
+
+The supervisor exits if any of the three processes dies, so Render restarts
+the whole container rather than leaving a stack that answers the health check
+but cannot sign.
+
+To go back to three services later, nothing in `apps/mpc-node` or
+`apps/mpc-coordinator` has to change. The supervisor only sets environment
+variables that those services already read.
+
 ## If you have Render credit
 
 Render prorates compute by the second. Use credit on the demo window, not on

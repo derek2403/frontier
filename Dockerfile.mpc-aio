@@ -1,0 +1,40 @@
+# SODA MPC all-in-one container: node p1, node p2 and the coordinator in one
+# image, supervised by scripts/mpc-all-in-one.mjs.
+#
+#   docker build -f Dockerfile.mpc-aio -t soda-mpc-aio .
+#
+# This exists so the stack fits in a single Render web service. It puts both
+# shares on one filesystem, which defeats the point of 2-of-2 threshold
+# signing. Use apps/mpc-node/Dockerfile twice plus
+# apps/mpc-coordinator/Dockerfile when the security claim has to hold.
+#
+# At runtime, mount the two shares and set the coordinator's token:
+#   /etc/secrets/share-p1.json   (Render Secret File)
+#   /etc/secrets/share-p2.json   (Render Secret File)
+#   MPC_AUTH_TOKEN=<token callers must present>
+
+FROM node:22-alpine AS deps
+RUN corepack enable
+WORKDIR /repo
+
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY apps/mpc-node/package.json apps/mpc-node/
+COPY apps/mpc-coordinator/package.json apps/mpc-coordinator/
+
+RUN pnpm install --filter mpc-node... --filter mpc-coordinator... --frozen-lockfile
+
+FROM node:22-alpine
+RUN corepack enable
+WORKDIR /repo
+
+COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo/apps/mpc-node/node_modules ./apps/mpc-node/node_modules
+COPY --from=deps /repo/apps/mpc-coordinator/node_modules ./apps/mpc-coordinator/node_modules
+COPY pnpm-workspace.yaml package.json ./
+COPY apps/mpc-node ./apps/mpc-node
+COPY apps/mpc-coordinator ./apps/mpc-coordinator
+COPY scripts/mpc-all-in-one.mjs ./scripts/mpc-all-in-one.mjs
+
+ENV NODE_ENV=production
+EXPOSE 8000
+CMD ["node", "scripts/mpc-all-in-one.mjs"]
