@@ -111,6 +111,7 @@ process.on('SIGINT', () => shutdown(0))
 start('p1', 'apps/mpc-node', {
   MPC_ROLE: 'p1',
   PORT: P1_PORT,
+  MPC_BIND_HOST: '127.0.0.1',
   MPC_SHARE_PATH: SHARE_P1,
   MPC_AUTH_TOKEN: NODE_TOKEN,
 })
@@ -118,6 +119,7 @@ start('p1', 'apps/mpc-node', {
 start('p2', 'apps/mpc-node', {
   MPC_ROLE: 'p2',
   PORT: P2_PORT,
+  MPC_BIND_HOST: '127.0.0.1',
   MPC_SHARE_PATH: SHARE_P2,
   MPC_AUTH_TOKEN: NODE_TOKEN,
 })
