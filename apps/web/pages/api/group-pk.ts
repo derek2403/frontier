@@ -3,7 +3,7 @@
 //
 // Reads from the on-chain Committee PDA, NOT from a local key file —
 // after the MPC migration (update_committee), the joint key is whatever
-// the AWS MPC committee produced via DKG. The private material never
+// the MPC committee produced via DKG. The private material never
 // exists in one place.
 
 import type { NextApiRequest, NextApiResponse } from "next";

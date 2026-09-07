@@ -348,7 +348,7 @@ export default function Home() {
           <p className="mt-3 text-zinc-400">
             The address below is owned by an{" "}
             <code className="font-mono">eth_demo</code> program PDA on Solana
-            — no private key. Two MPC nodes on AWS produce the signature
+            — no private key. Two MPC nodes produce the signature
             jointly; Solana&apos;s <code className="font-mono">secp256k1_recover</code>{" "}
             syscall verifies it on-chain, then it&apos;s broadcast to Sepolia.
           </p>
@@ -381,13 +381,15 @@ export default function Home() {
                 Live MPC committee · 2-of-2 Lindell &apos;17 ECDSA
               </div>
               <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-                <div>node P1 · us-east-1 · share x1</div>
-                <div>node P2 · us-east-1 · share x2</div>
+                <div>node P1 · share x1</div>
+                <div>node P2 · share x2</div>
                 <div>coordinator · {MPC_COORDINATOR}</div>
                 <div className="pt-1 text-xs text-emerald-300/60">
                   Neither node holds the joint secret. Signing runs the 4-message
                   Lindell &apos;17 protocol; the on-chain{" "}
                   <code>secp256k1_recover</code> syscall verifies the result.
+                  Both nodes are co-located on one Render instance for this
+                  demo; splitting them across hosts is a config change.
                 </div>
               </div>
             </div>

@@ -271,7 +271,7 @@ export async function runDemo(
   let sigBytes: Uint8Array;
   let recoveryId: number;
   if (MPC_URL) {
-    // Real Lindell '17 2-of-2 ECDSA via the AWS coordinator.
+    // Real Lindell '17 2-of-2 ECDSA via the MPC coordinator.
     onEvent({
       kind: "log",
       message: `mpc: POST ${MPC_URL}/sign (payload + tweak)`,
