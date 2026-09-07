@@ -196,7 +196,13 @@ app.post<{
   }
 })
 
-await app.listen({ host: '0.0.0.0', port: PORT })
+// Default to all interfaces, because the coordinator normally reaches this
+// node from another host. The all-in-one supervisor overrides it to
+// 127.0.0.1, so the nodes are invisible to the platform's port scanner and
+// only the coordinator's port can ever be routed.
+const BIND_HOST = process.env.MPC_BIND_HOST ?? '0.0.0.0'
+
+await app.listen({ host: BIND_HOST, port: PORT })
 app.log.info({ role: ROLE, port: PORT, authenticated: !!AUTH_TOKEN }, 'mpc-node ready')
 if (!AUTH_TOKEN) {
   app.log.warn(
