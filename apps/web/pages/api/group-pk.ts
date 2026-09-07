@@ -10,7 +10,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { Connection, PublicKey } from "@solana/web3.js";
 
 const SODA_PROGRAM_ID = new PublicKey(
-  "99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4",
+  "2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd",
 );
 
 function solanaRpc(): string {

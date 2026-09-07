@@ -3,6 +3,7 @@ name = "soda"
 version.workspace = true
 description = "SODA core — Solana chain-signature primitive"
 edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]

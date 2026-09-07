@@ -48,8 +48,8 @@ build is the next-but-unbuilt step.
 
 | Component | Path | Run | What it does | Verified by |
 |---|---|---|---|---|
-| **soda program** | `contracts/programs/soda/` | (deployed) | On-chain SODA core: `init_committee`, `request_signature`, `finalize_signature` (with on-chain `secp256k1_recover`) | Live on devnet at `99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4`. 7 Rust unit tests pass (G+G=2G, etc). |
-| **eth_demo program** | `contracts/programs/eth_demo/` | (deployed) | Demo harness: builds RLP, keccaks, CPIs into soda. Emits `EthTxRequested` event with the unsigned RLP for the relayer. | Live on devnet at `9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM`. 9 Rust unit tests pass (EIP-155 mainnet vector). |
+| **soda program** | `contracts/programs/soda/` | (deployed) | On-chain SODA core: `init_committee`, `request_signature`, `finalize_signature` (with on-chain `secp256k1_recover`) | Live on devnet at `2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd`. 7 Rust unit tests pass (G+G=2G, etc). |
+| **eth_demo program** | `contracts/programs/eth_demo/` | (deployed) | Demo harness: builds RLP, keccaks, CPIs into soda. Emits `EthTxRequested` event with the unsigned RLP for the relayer. | Live on devnet at `GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA`. 9 Rust unit tests pass (EIP-155 mainnet vector). |
 | **soda-sdk (TS)** | `packages/soda-sdk/` | `pnpm sdk:test` | Derivation, RLP encode/decode, EIP-155 v calc, EthRpc client. Source-only ESM workspace package consumed by demo + web + relayer. | 13/13 vitest parity tests (G+G=2G + EIP-155 canonical + RLP round-trip). |
 | **CLI demo** | `apps/demo/` | `./demo.sh` (defaults to devnet) | One-shot orchestrator: validator/deploy/airdrop chores → init committee → sign on Solana → sign ECDSA → finalize on-chain → broadcast → auto-runs verify. | Multiple real Sepolia txs broadcast today; Etherscan + Solscan visible. |
 | **verify tool** | `apps/demo/src/verify.ts` | `pnpm verify <eth_hash>` | Cryptographic audit: 6 checks tying the broadcast Sepolia tx back to the SigRequest PDA on Solana. Reads only public state. | Auto-chained from `demo.sh`; manually `pnpm verify 0x…` works against any past tx. |

@@ -17,7 +17,10 @@ dist/
 .env.development.local
 
 # Rust
-Cargo.lock
+# Cargo.lock IS committed. contracts/ builds programs, not a library, and the
+# Solana toolchain bundles an old cargo (1.84 for solana 2.3.0) that cannot
+# parse edition2024 manifests. Without a lock, cargo re-resolves to whatever
+# is newest and `anchor build` breaks on a different crate each time.
 **/*.rs.bk
 
 # Signer keyshares (NEVER commit these)

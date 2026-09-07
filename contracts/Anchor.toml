@@ -1,12 +1,14 @@
 [toolchain]
+anchor_version = "0.32.1"
+solana_version = "2.3.0"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.localnet]
-eth_demo = "9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM"
-soda = "99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4"
+eth_demo = "GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA"
+soda = "2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd"
 
 [registry]
 url = "https://api.apr.dev"

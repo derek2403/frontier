@@ -8,7 +8,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4");
+declare_id!("2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd");
 
 #[program]
 pub mod soda {

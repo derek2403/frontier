@@ -4,7 +4,7 @@ use solana_program::keccak;
 pub mod eth_rlp;
 pub mod state;
 
-declare_id!("9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM");
+declare_id!("GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA");
 
 pub const ETH_SEPOLIA_CHAIN_ID: u64 = 11_155_111;
 

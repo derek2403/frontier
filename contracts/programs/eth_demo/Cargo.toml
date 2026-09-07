@@ -3,6 +3,7 @@ name = "eth_demo"
 version.workspace = true
 description = "SODA ETH demo harness — Sepolia value transfer via CPI to soda"
 edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]
