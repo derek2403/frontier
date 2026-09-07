@@ -29,7 +29,29 @@ import { fileURLToPath } from 'node:url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const REPO_ROOT = resolve(__dirname, '../../..')
-const SODA_IDL_PATH = resolve(REPO_ROOT, 'contracts/target/idl/soda.json')
+
+/**
+ * The program ID is the only thing this script needs from an IDL, and it
+ * builds the instruction by hand. So do not force a fresh `anchor build`:
+ * fall back to the IDL committed for the web app, which carries the same
+ * address. $SODA_PROGRAM_ID overrides both.
+ */
+const IDL_CANDIDATES = [
+  resolve(REPO_ROOT, 'contracts/target/idl/soda.json'),
+  resolve(REPO_ROOT, 'apps/web/lib/idl/soda.json'),
+]
+
+function resolveProgramId(): string {
+  if (process.env.SODA_PROGRAM_ID) return process.env.SODA_PROGRAM_ID
+  for (const p of IDL_CANDIDATES) {
+    if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8')).address
+  }
+  throw new Error(
+    'Cannot find the soda program ID.\n' +
+      `Looked in:\n  ${IDL_CANDIDATES.join('\n  ')}\n` +
+      'Run `cd contracts && anchor build`, or set SODA_PROGRAM_ID.',
+  )
+}
 
 ;(() => {
   const envPath = resolve(REPO_ROOT, '.env')
@@ -71,8 +93,7 @@ const groupPkCompressed = new Uint8Array(33)
 groupPkCompressed[0] = compressedPrefix
 groupPkCompressed.set(Buffer.from(share.groupPkXY.x, 'hex'), 1)
 
-const sodaIdl = JSON.parse(readFileSync(SODA_IDL_PATH, 'utf8'))
-const sodaProgramId = new PublicKey(sodaIdl.address)
+const sodaProgramId = new PublicKey(resolveProgramId())
 
 const connection = new Connection(SOLANA_RPC, 'confirmed')
 const payerSecret = new Uint8Array(JSON.parse(readFileSync(ANCHOR_WALLET, 'utf8')))
@@ -82,6 +103,32 @@ const [committeePda] = PublicKey.findProgramAddressSync(
   [Buffer.from('committee')],
   sodaProgramId,
 )
+
+// Pre-flight. The on-chain ix is gated by `has_one = authority`, and a
+// mismatch there surfaces as an opaque Anchor error. Check it here so the
+// message names the wallet you actually need.
+// Committee layout: 8 discriminator, 1 bump, 32 authority, 33 group_pk, 1 count.
+const committeeAcct = await connection.getAccountInfo(committeePda)
+if (!committeeAcct) {
+  console.error(`Committee PDA ${committeePda.toBase58()} does not exist.`)
+  console.error('Run init_committee first.')
+  process.exit(1)
+}
+const onChainAuthority = new PublicKey(committeeAcct.data.subarray(9, 41))
+const onChainGroupPk = Buffer.from(committeeAcct.data.subarray(41, 74))
+
+if (onChainGroupPk.equals(Buffer.from(groupPkCompressed))) {
+  console.log('On-chain group_pk already matches this share. Nothing to do.')
+  process.exit(0)
+}
+
+if (!onChainAuthority.equals(payer.publicKey)) {
+  console.error('Wrong wallet: update_committee is authority-gated.\n')
+  console.error(`  committee authority : ${onChainAuthority.toBase58()}`)
+  console.error(`  your wallet         : ${payer.publicKey.toBase58()}`)
+  console.error(`\nRe-run with ANCHOR_WALLET pointing at the authority keypair.`)
+  process.exit(1)
+}
 
 const updateDisc = sha256(
   new TextEncoder().encode('global:update_committee'),
@@ -114,7 +161,8 @@ console.log('Submitting update_committee...')
 console.log(`  Solana RPC:   ${SOLANA_RPC.split('?')[0]}`)
 console.log(`  Authority:    ${payer.publicKey.toBase58()}`)
 console.log(`  Committee:    ${committeePda.toBase58()}`)
-console.log(`  new group_pk: ${Buffer.from(groupPkCompressed).toString('hex')}`)
+console.log(`  old group_pk: ${onChainGroupPk.toString("hex")}`)
+console.log(`  new group_pk: ${Buffer.from(groupPkCompressed).toString("hex")}`)
 console.log(`  signer_count: ${SIGNER_COUNT}`)
 
 const sig = await connection.sendRawTransaction(tx.serialize())
