@@ -14,11 +14,24 @@ import SignAndSendButton from "@/components/SignAndSendButton";
 import SignedHexView from "@/components/SignedHexView";
 import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
+  AAVE_BORROW_AMOUNT_USDC,
+  AAVE_BORROW_GAS_LIMIT,
+  AAVE_BORROW_MIN_BALANCE_WEI,
   AAVE_DEPOSIT_GAS_LIMIT,
   AAVE_DEPOSIT_MIN_BALANCE_WEI,
+  type AaveUserAccountData,
+  type AaveV3Addresses,
   addressToBytes,
+  borrowCalldata,
+  decodeReserveRates,
+  decodeUserAccountData,
   depositEthCalldata,
+  erc20BalanceOfCalldata,
   getChain,
+  getReserveDataCalldata,
+  getUserAccountDataCalldata,
+  rayRateToApr,
+  rayRateToApy,
   bigintToBe,
   computeTweak,
   deriveForeignPk,
@@ -75,6 +88,108 @@ const SOLANA_RPC =
 
 function bytesToHex(b: Uint8Array): string {
   return "0x" + Array.from(b).map((n) => n.toString(16).padStart(2, "0")).join("");
+}
+
+// ---------------------------------------------------------------------------
+// Actions. Every action is the same pipeline — Phantom signs sign_eth_transfer,
+// the committee signs the payload, finalize_signature verifies it on-chain,
+// the relayer broadcasts — with a different EVM transaction at the end. This
+// table is the ONLY place that differs per action, so adding one is a row.
+// ---------------------------------------------------------------------------
+type ActionKey = "deposit" | "borrow";
+
+type TxSpec = {
+  to: Uint8Array;
+  valueWei: bigint;
+  data: Uint8Array;
+  gasLimit: bigint;
+  /** What the derived address must hold before this can be broadcast. */
+  minBalanceWei: bigint;
+};
+
+type ActionDef = {
+  key: ActionKey;
+  title: string;
+  /** The contract call, for the card. */
+  callName: string;
+  /** Button text before / after a successful run. */
+  button: string;
+  buttonAgain: string;
+  description: string;
+  /** Label for the `to` address in the result panel. */
+  toLabel: string;
+  /** One-line result summary. */
+  valueLine: string;
+  build: (aave: AaveV3Addresses, derived: Uint8Array) => TxSpec;
+};
+
+const USDC_PER_CLICK = `${(Number(AAVE_BORROW_AMOUNT_USDC) / 1e6).toFixed(2)} USDC`;
+
+const ACTIONS: Record<ActionKey, ActionDef> = {
+  deposit: {
+    key: "deposit",
+    title: "Deposit ETH",
+    callName: "WrappedTokenGatewayV3.depositETH",
+    button: "Sign & deposit 0.0001 ETH into Aave V3",
+    buttonAgain: "Deposit again",
+    description:
+      "Supplies 0.0001 ETH. The derived address receives aWETH — a lending " +
+      "position held by a Solana account, earning interest from the next block.",
+    toLabel: "Aave WrappedTokenGatewayV3",
+    valueLine: "0.0001 ETH deposited → aWETH",
+    build: (aave, derived) => ({
+      // `to` is the gateway; `onBehalfOf` inside the calldata is the DERIVED
+      // address, so the resulting aWETH is held by the Solana-controlled
+      // account — not by the sponsor, not by the user's Phantom wallet.
+      to: addressToBytes(aave.WETH_GATEWAY),
+      valueWei: 100_000_000_000_000n, // 0.0001 ETH
+      data: depositEthCalldata(aave, derived),
+      gasLimit: AAVE_DEPOSIT_GAS_LIMIT,
+      minBalanceWei: AAVE_DEPOSIT_MIN_BALANCE_WEI,
+    }),
+  },
+  borrow: {
+    key: "borrow",
+    title: "Borrow USDC",
+    callName: "Pool.borrow",
+    button: `Sign & borrow ${USDC_PER_CLICK} against the ETH`,
+    buttonAgain: "Borrow again",
+    description:
+      `Borrows ${USDC_PER_CLICK} at the variable rate against the aWETH ` +
+      "collateral. Only the position's owner can do this, and the derived " +
+      "address ends up holding an asset it never had.",
+    toLabel: "Aave V3 Pool",
+    valueLine: `${USDC_PER_CLICK} borrowed → USDC at the derived address`,
+    build: (aave, derived) => ({
+      to: addressToBytes(aave.POOL),
+      valueWei: 0n,
+      data: borrowCalldata(aave, AAVE_BORROW_AMOUNT_USDC, derived),
+      gasLimit: AAVE_BORROW_GAS_LIMIT,
+      minBalanceWei: AAVE_BORROW_MIN_BALANCE_WEI,
+    }),
+  },
+};
+
+/** Live view of the derived address inside Aave, straight from the Pool. */
+type AavePosition = {
+  aWethWei: bigint;
+  usdcUnits: bigint;
+  debtUsdcUnits: bigint;
+  account: AaveUserAccountData;
+  supplyApy: number;
+  borrowApr: number;
+};
+
+const MAX_UINT256 = (1n << 256n) - 1n;
+
+function fmtUsd8(v: bigint): string {
+  return `$${(Number(v) / 1e8).toFixed(4)}`;
+}
+function fmtUsdc(v: bigint): string {
+  return `${(Number(v) / 1e6).toFixed(4)} USDC`;
+}
+function fmtEth18(v: bigint, unit: string): string {
+  return `${(Number(v) / 1e18).toFixed(9)} ${unit}`;
 }
 
 // A step is `locked` until the one before it produced its artifact. Locking is
@@ -135,6 +250,7 @@ function StepCard({
 }
 
 type RunResult = {
+  action: ActionKey;
   ethAddress: string;
   recipient: string;
   signedHex: string;
@@ -153,12 +269,15 @@ export default function Home() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [signer, setSigner] = useState<SignerInfo | null>(null);
   // Set when the server's chain differs from the one this bundle was built
   // for. Blocks the demo: proceeding would fund on one chain and broadcast
   // on another.
   const [configError, setConfigError] = useState<string | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [position, setPosition] = useState<AavePosition | null>(null);
+  const [positionError, setPositionError] = useState<string | null>(null);
+  // Which action is running, so the right button shows the spinner.
+  const [running, setRunning] = useState<ActionKey | null>(null);
 
   const { publicKey: walletPubkey, connected } = useWallet();
   const anchorWallet = useAnchorWallet();
@@ -178,7 +297,6 @@ export default function Home() {
         }) => {
           if (d.groupPkHex) setGroupPkHex(d.groupPkHex);
           else if (d.error) setError(d.error);
-          if (d.signer) setSigner(d.signer);
           if (d.chain && d.chain !== CHAIN.key) {
             setConfigError(
               `This page was built for ${CHAIN.name} (NEXT_PUBLIC_DEMO_CHAIN=` +
@@ -217,6 +335,8 @@ export default function Home() {
     setEthAddress(null);
     setBalance(null);
     setBalanceError(null);
+    setPosition(null);
+    setPositionError(null);
     setResult(null);
     setSignedHex(null);
     setTimeline(INITIAL_TIMELINE);
@@ -283,13 +403,55 @@ export default function Home() {
     };
   }, [ethAddress, sepolia]);
 
+  // The Aave position, read from the Pool itself rather than computed here,
+  // so the numbers on screen are Aave's: what it counts as collateral, what
+  // it would lend, the rate it pays. Polled so a deposit or borrow shows up
+  // without a reload and the interest column visibly ticks.
+  useEffect(() => {
+    if (!ethAddress || !CHAIN.aave) return;
+    const aave = CHAIN.aave;
+    const derived = addressToBytes(ethAddress);
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const [aWeth, usdc, debt, acct, wethRes, usdcRes] = await Promise.all([
+          sepolia.ethCall(aave.A_WETH, erc20BalanceOfCalldata(derived)),
+          sepolia.ethCall(aave.USDC_UNDERLYING, erc20BalanceOfCalldata(derived)),
+          sepolia.ethCall(aave.V_USDC, erc20BalanceOfCalldata(derived)),
+          sepolia.ethCall(aave.POOL, getUserAccountDataCalldata(derived)),
+          sepolia.ethCall(aave.POOL, getReserveDataCalldata(aave.WETH_UNDERLYING)),
+          sepolia.ethCall(aave.POOL, getReserveDataCalldata(aave.USDC_UNDERLYING)),
+        ]);
+        if (cancelled) return;
+        setPosition({
+          aWethWei: BigInt(aWeth),
+          usdcUnits: BigInt(usdc),
+          debtUsdcUnits: BigInt(debt),
+          account: decodeUserAccountData(acct),
+          supplyApy: rayRateToApy(decodeReserveRates(wethRes).currentLiquidityRate),
+          borrowApr: rayRateToApr(decodeReserveRates(usdcRes).currentVariableBorrowRate),
+        });
+        setPositionError(null);
+      } catch (e) {
+        if (!cancelled) setPositionError((e as Error).message);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 8_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [ethAddress, sepolia]);
+
   const programs = useMemo(
     () => ({ soda: SODA_PROGRAM_ID, ethDemo: ETH_DEMO_PROGRAM_ID }),
     [],
   );
 
-  const onSign = async () => {
+  const runAction = async (action: ActionKey) => {
     if (busy) return;
+    const def = ACTIONS[action];
     if (!anchorWallet || !walletPubkey) {
       setError("connect Phantom first");
       return;
@@ -304,6 +466,7 @@ export default function Home() {
     setResult(null);
     setTimeline(INITIAL_TIMELINE);
     setBusy(true);
+    setRunning(action);
 
     const updateStep = (name: keyof TimelineState, status: Step) =>
       setTimeline((prev) => ({ ...prev, [name]: status }));
@@ -342,15 +505,12 @@ export default function Home() {
       // in use" on-chain because the SigRequest PDA is seeded by payload.
       const salt = BigInt(Math.floor(Math.random() * 100_000_000));
       const gasPrice = baseGasPrice + salt;
-      const valueWei = 100_000_000_000_000n; // 0.0001 ETH
+      const spec = def.build(CHAIN.aave, ethAddrBytes);
+      const valueWei = spec.valueWei;
       const valueWeiBe = bigintToBe(valueWei, 16);
-
-      // `to` is the gateway; `onBehalfOf` inside the calldata is the DERIVED
-      // address, so the resulting aWETH is held by the Solana-controlled
-      // account — not by the sponsor, not by the user's Phantom wallet.
-      const txTo = addressToBytes(CHAIN.aave.WETH_GATEWAY);
-      const txData = depositEthCalldata(CHAIN.aave, ethAddrBytes);
-      const gasLimit = AAVE_DEPOSIT_GAS_LIMIT;
+      const txTo = spec.to;
+      const txData = spec.data;
+      const gasLimit = spec.gasLimit;
 
       const unsignedRlp = encodeUnsignedLegacy({
         nonce,
@@ -413,7 +573,7 @@ export default function Home() {
       // /api/fund is idempotent and returns immediately if already funded; it
       // runs inside `busy` because confirmation can take a minute or two. The
       // Aave call needs ~300k gas of headroom, well past a 21k transfer.
-      const requiredWei = AAVE_DEPOSIT_MIN_BALANCE_WEI;
+      const requiredWei = spec.minBalanceWei;
       if (balance === null || balance < requiredWei) {
         const fundRes = await fetch("/api/fund", {
           method: "POST",
@@ -437,14 +597,32 @@ export default function Home() {
         if (fundJson.balanceWei) setBalance(BigInt(fundJson.balanceWei));
       }
 
-      // -------- 5. Phantom signs eth_demo::sign_eth_transfer --------
+      // -------- 5. Ask the EVM node to simulate it --------
+      // Aave refusing (no collateral, borrow cap, paused reserve) is a revert
+      // inside the transaction, which would otherwise be discovered only after
+      // Phantom signed, the committee signed, and gas was burned on-chain.
+      // eth_estimateGas runs the call and surfaces the revert reason now.
+      try {
+        await sepolia.estimateGas({
+          from: ethAddress,
+          to: bytesToHex(txTo),
+          data: txData,
+          valueWei,
+        });
+      } catch (e) {
+        throw new Error(
+          `${def.callName} would revert for ${ethAddress}: ${(e as Error).message}`,
+        );
+      }
+
+      // -------- 6. Phantom signs eth_demo::sign_eth_transfer --------
       updateStep("signEthTransfer", "active");
       const signTxSig: string = await signBuilder.rpc();
 
       updateStep("signEthTransfer", "done");
       updateStep("sigRequested", "done");
 
-      // -------- 6. Backend: MPC sign + finalize + broadcast --------
+      // -------- 7. Backend: MPC sign + finalize + broadcast --------
       updateStep("signOffChain", "active");
       const finalizeRes = await fetch("/api/finalize", {
         method: "POST",
@@ -479,6 +657,7 @@ export default function Home() {
       updateStep("broadcastEth", "done");
 
       setResult({
+        action,
         ethAddress: finalize.ethAddress,
         recipient: bytesToHex(txTo),
         signedHex: finalize.signedHex,
@@ -500,6 +679,7 @@ export default function Home() {
       });
     } finally {
       setBusy(false);
+      setRunning(null);
     }
   };
 
@@ -542,16 +722,14 @@ export default function Home() {
       <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">
-            A Solana program just signed an Ethereum transaction.
+            Lend and borrow on Aave with nothing but a Solana wallet.
           </h1>
           <p className="mt-3 text-zinc-400">
-            Three steps. Your Solana wallet owns an {CHAIN.name} address that
-            the <code className="font-mono">soda</code> program derives on-chain
-            as <code className="font-mono">group_pk + tweak·G</code> — the
-            caller never names an address, so no wallet can request a signature
-            for another&apos;s. Solana&apos;s{" "}
-            <code className="font-mono">secp256k1_recover</code> syscall
-            verifies the signature on-chain before it&apos;s broadcast.
+            Your Solana wallet owns an address on {CHAIN.name}. Deposit ETH into
+            Aave V3 and borrow USDC against it, one Phantom approval each. No
+            bridge, no ETH to hold, no second wallet. A Solana program commits
+            the exact transaction and verifies the signature on-chain before
+            anything is broadcast.
           </p>
         </div>
 
@@ -640,35 +818,146 @@ export default function Home() {
             {/* ---------- STEP 3 · transact ---------- */}
             <StepCard
               n={3}
-              title={`Deposit into Aave V3 on ${CHAIN.name}`}
+              title={`Use Aave V3 on ${CHAIN.name}`}
               state={step3Done ? "done" : activeStep === 3 ? "active" : "locked"}
             >
-              <div className="font-mono text-sm text-emerald-200">
-                Aave V3 · depositETH
-              </div>
-              <p className="mt-2 text-xs text-zinc-500">
-                Calls{" "}
-                <code className="font-mono">
-                  WrappedTokenGatewayV3.depositETH
-                </code>{" "}
-                with 0.0001 ETH. The derived address receives aWETH — a lending
-                position held by a Solana account, earning interest from the
-                next block. Gas is topped up automatically from the sponsor key.
+              <p className="text-xs text-zinc-500">
+                Each button is one Phantom approval. The Solana program commits
+                the exact EVM transaction, the committee signs it, and{" "}
+                <code className="font-mono">secp256k1_recover</code> checks the
+                signature on-chain before it is broadcast. Gas is topped up
+                automatically from the sponsor key.
               </p>
-              <div className="mt-4">
-                <SignAndSendButton
-                  disabled={buttonDisabled}
-                  busy={busy}
-                  label={
-                    step3Done
-                      ? "Deposit again"
-                      : `Sign & deposit 0.0001 ETH into Aave V3`
-                  }
-                  onClick={onSign}
-                />
+
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {(Object.values(ACTIONS) as ActionDef[]).map((def) => {
+                  const done = result?.action === def.key;
+                  const needsCollateral =
+                    def.key === "borrow" &&
+                    position !== null &&
+                    position.account.availableBorrowsBase === 0n;
+                  return (
+                    <div
+                      key={def.key}
+                      className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-950/40 p-4"
+                    >
+                      <div className="text-sm font-medium text-zinc-100">
+                        {def.title}
+                      </div>
+                      <div className="mt-1 font-mono text-xs text-emerald-200">
+                        Aave V3 · {def.callName}
+                      </div>
+                      <p className="mt-2 flex-1 text-xs text-zinc-500">
+                        {def.description}
+                      </p>
+                      {needsCollateral ? (
+                        <p className="mt-2 text-xs text-amber-300/80">
+                          Aave reports nothing to borrow against yet — deposit
+                          first.
+                        </p>
+                      ) : null}
+                      <div className="mt-4">
+                        <SignAndSendButton
+                          disabled={buttonDisabled || (busy && running !== def.key)}
+                          busy={running === def.key}
+                          label={done ? def.buttonAgain : def.button}
+                          onClick={() => runAction(def.key)}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </StepCard>
         </div>
+
+        {/* Aave's own view of the derived address. Nothing here is computed
+            by us: every number is an eth_call to the Pool or a token, so what
+            the audience sees is what Aave believes about a Solana wallet. */}
+        {ethAddress && CHAIN.aave ? (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-xs uppercase tracking-wider text-zinc-500">
+                Aave V3 position · live from the Pool on {CHAIN.name}
+              </div>
+              <div className="text-xs text-zinc-600">
+                refreshes every 8s
+              </div>
+            </div>
+            {position ? (
+              <div className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                <div>
+                  <div className="text-xs text-zinc-500">Supplied (aWETH)</div>
+                  <div className="mt-0.5 font-mono text-emerald-200">
+                    {fmtEth18(position.aWethWei, "aWETH")}
+                  </div>
+                  <div className="mt-0.5 text-xs text-zinc-500">
+                    earning {(position.supplyApy * 100).toFixed(2)}% APY
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-zinc-500">Borrowed (USDC debt)</div>
+                  <div className="mt-0.5 font-mono text-emerald-200">
+                    {fmtUsdc(position.debtUsdcUnits)}
+                  </div>
+                  <div className="mt-0.5 text-xs text-zinc-500">
+                    at {(position.borrowApr * 100).toFixed(2)}% variable APR
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-zinc-500">USDC held by the address</div>
+                  <div className="mt-0.5 font-mono text-zinc-200">
+                    {fmtUsdc(position.usdcUnits)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-zinc-500">Collateral · available to borrow</div>
+                  <div className="mt-0.5 font-mono text-zinc-200">
+                    {fmtUsd8(position.account.totalCollateralBase)} ·{" "}
+                    {fmtUsd8(position.account.availableBorrowsBase)}
+                  </div>
+                  <div className="mt-0.5 text-xs text-zinc-500">
+                    LTV {(Number(position.account.ltv) / 100).toFixed(2)}% · health
+                    factor{" "}
+                    {position.account.healthFactor === MAX_UINT256
+                      ? "∞ (no debt)"
+                      : (Number(position.account.healthFactor) / 1e18).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-zinc-500">
+                {positionError ? `could not read the Pool: ${positionError}` : "reading…"}
+              </div>
+            )}
+            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+              <a
+                href={CHAIN.explorerToken(CHAIN.aave.A_WETH, ethAddress)}
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-zinc-300"
+              >
+                aWETH on explorer →
+              </a>
+              <a
+                href={CHAIN.explorerToken(CHAIN.aave.USDC_UNDERLYING, ethAddress)}
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-zinc-300"
+              >
+                USDC on explorer →
+              </a>
+              <a
+                href={CHAIN.explorerAddress(CHAIN.aave.POOL)}
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-zinc-300"
+              >
+                Pool contract →
+              </a>
+            </div>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="rounded-lg bg-rose-950/40 border border-rose-900 px-4 py-3 text-sm text-rose-200">
@@ -745,19 +1034,25 @@ export default function Home() {
               </span>
               <span className="text-emerald-300/50">to</span>
               <span className="break-all">
-                {result.recipient} (Aave WrappedTokenGatewayV3)
+                {result.recipient} ({ACTIONS[result.action].toLabel})
               </span>
-              <span className="text-emerald-300/50">value</span>
-              <span>0.0001 ETH deposited &rarr; aWETH</span>
+              <span className="text-emerald-300/50">action</span>
+              <span>{ACTIONS[result.action].valueLine}</span>
               <span className="text-emerald-300/50">position</span>
               <span className="break-all">
                 <a
-                  href={CHAIN.explorerToken(CHAIN.aave!.A_WETH, result.ethAddress)}
+                  href={CHAIN.explorerToken(
+                    result.action === "borrow"
+                      ? CHAIN.aave!.USDC_UNDERLYING
+                      : CHAIN.aave!.A_WETH,
+                    result.ethAddress,
+                  )}
                   target="_blank"
                   rel="noreferrer"
                   className="underline hover:text-emerald-100"
                 >
-                  aWETH balance of {result.ethAddress.slice(0, 10)}&hellip;
+                  {result.action === "borrow" ? "USDC" : "aWETH"} balance of{" "}
+                  {result.ethAddress.slice(0, 10)}&hellip;
                 </a>
               </span>
               <span className="text-emerald-300/50">soda program</span>
@@ -768,63 +1063,6 @@ export default function Home() {
           </div>
         ) : null}
 
-        {/* Deployment facts, below the steps: reference material for anyone who
-            asks "what am I actually looking at", not part of the click path. */}
-        <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
-          <div>SODA program:     {programs.soda}</div>
-          <div>eth_demo program: {programs.ethDemo}</div>
-          <div>Solana cluster:   devnet (Helius)</div>
-        </div>
-
-        {/* Signing backend. Reflects how this deployment is actually
-            configured rather than asserting a committee that may not be
-            reachable — the panel used to hardcode a decommissioned host. */}
-        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            </span>
-            {signer === null
-              ? "Signer · loading…"
-              : signer.mode === "mpc"
-                ? "MPC committee · 2-of-2 Lindell '17 ECDSA"
-                : "Signer · v0 single key (server-side)"}
-          </div>
-          <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-            {signer?.mode === "mpc" ? (
-              <>
-                <div>node P1 · share x1</div>
-                <div>node P2 · share x2</div>
-                <div>coordinator · {signer.coordinator}</div>
-                <div className="pt-1 text-xs text-emerald-300/60">
-                  Neither node holds the joint secret. Signing runs the
-                  4-message Lindell &apos;17 protocol; the on-chain{" "}
-                  <code>secp256k1_recover</code> syscall verifies the result.
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  key ·{" "}
-                  {signer?.mode === "dev-key" && signer.source === "env"
-                    ? "SODA_SIGNER_KEY_HEX (one key, in the server's env)"
-                    : signer?.mode === "dev-key" && signer.source === "missing"
-                      ? "MISSING — no SODA_SIGNER_KEY_HEX and no keyshare.dev.json"
-                      : "keyshare.dev.json (one key, on the server)"}
-                </div>
-                <div className="pt-1 text-xs text-emerald-300/60">
-                  The derived address above comes from{" "}
-                  <em>your connected wallet</em>:{" "}
-                  <code>group_pk + tweak·G</code>, and the on-chain{" "}
-                  <code>secp256k1_recover</code> syscall verifies the signature
-                  before anything is broadcast. Replacing this single key with a
-                  threshold committee is what removes the last trusted party.
-                </div>
-              </>
-            )}
-          </div>
-        </div>
       </main>
     </div>
   );

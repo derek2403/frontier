@@ -36,6 +36,39 @@ export class EthRpc {
     return await this.call<string>("eth_sendRawTransaction", [signedHex]);
   }
 
+  /** Read-only contract call at `latest`; returns the raw ABI-encoded hex. */
+  async ethCall(toHex: string, data: Uint8Array): Promise<string> {
+    return await this.call<string>("eth_call", [
+      { to: toHex, data: "0x" + Buffer.from(data).toString("hex") },
+      "latest",
+    ]);
+  }
+
+  /**
+   * Simulate a transaction and return the gas it would use. The node runs the
+   * call, so a contract that would revert (Aave refusing a borrow, say) fails
+   * HERE with the revert reason — before anything is signed or broadcast.
+   */
+  async estimateGas(tx: {
+    from: string;
+    to: string;
+    data: Uint8Array;
+    valueWei?: bigint;
+  }): Promise<bigint> {
+    return BigInt(
+      await this.call<string>("eth_estimateGas", [
+        {
+          from: tx.from,
+          to: tx.to,
+          data: "0x" + Buffer.from(tx.data).toString("hex"),
+          ...(tx.valueWei && tx.valueWei > 0n
+            ? { value: "0x" + tx.valueWei.toString(16) }
+            : {}),
+        },
+      ]),
+    );
+  }
+
   get endpoint(): string {
     return this.url;
   }

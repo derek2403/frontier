@@ -588,6 +588,34 @@ Alchemy app the user has only serves Base Sepolia + Solana devnet, not
 Ethereum Sepolia. On-chain committee `group_pk` (`02062edf…`) matches the
 laptop's `keyshare.dev.json`; authority is the laptop wallet `D5pwjGzq…`.
 
+## Aave actions: deposit + borrow — added 2026-09-09
+
+The demo has two EVM actions, both one transaction through the identical
+pipeline; only the calldata differs. `packages/soda-sdk/src/aave.ts` holds
+the addresses (from bgd-labs/aave-address-book), calldata builders, and the
+`getUserAccountData` / `getReserveData` decoders the web page uses to show
+Aave's own view of the derived address.
+
+| Action | Contract call | Gas (measured → limit) | CLI | Web |
+|---|---|---|---|---|
+| deposit (default) | `WrappedTokenGatewayV3.depositETH`, 0.0001 ETH | 229,989 → 300k | `./demo.sh` | step 3, left button |
+| borrow | `Pool.borrow(USDC, 0.1, variable, 0, derived)` | 288,022 → 400k | `DEMO_ACTION=borrow ./demo.sh` | step 3, right button |
+
+USDC on Base Sepolia's Aave market is Aave's test token
+`0xba50Cd2A…`, NOT Circle's `0x036C…` (which is not a reserve there).
+`ACTIONS` in `apps/web/pages/index.tsx` is the single per-action table in
+the web app; adding an action is a row.
+
+Both paths call `eth_estimateGas` from the derived address before touching
+Solana, so an Aave revert (no collateral, cap, paused) is reported with its
+reason instead of costing two Solana txs and burned gas.
+
+Verified 2026-09-09 on Base Sepolia from the laptop wallet's derived address
+`0xd552…1ce5`: borrow tx `0x732af17f…` succeeded, `pnpm verify` passed all
+checks, and Aave then reported 0.1 USDC held + 0.1 vUSDC debt against
+~$0.75 of aWETH collateral. `demo.sh`'s SOL gate now only demands 5 SOL when
+a deploy is needed (0.05 otherwise).
+
 ## Render MPC deployment — added 2026-09-05
 
 Second deployment target for the same three services, alongside AWS. Free

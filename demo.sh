@@ -9,12 +9,14 @@
 #                                      Auto-starts validator + airdrops.
 #
 # Other usage:
-#   ./demo.sh                                — default: devnet, self-transfer
-#   DEMO_RECIPIENT=0x… ./demo.sh             — send to a specific address
-#   SODA_DRY_RUN=1 ./demo.sh                 — skip Sepolia broadcast
+#   ./demo.sh                                — default: devnet, Aave depositETH
+#   DEMO_ACTION=borrow ./demo.sh             — Aave Pool.borrow 0.1 USDC against the aWETH
+#   DEMO_CHAIN=base-sepolia ./demo.sh        — destination chain (sepolia | base-sepolia)
+#   SODA_DRY_RUN=1 ./demo.sh                 — skip the EVM broadcast
 #   SOLANA_CLUSTER=local ./demo.sh           — run against local validator
 #
-# Optional env: SEPOLIA_RPC_URL, ANCHOR_WALLET, SOLANA_RPC_URL.
+# Optional env: SEPOLIA_RPC_URL / BASE_SEPOLIA_RPC_URL, SEPOLIA_FUNDER_KEY,
+# ANCHOR_WALLET, SOLANA_RPC_URL.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -87,11 +89,22 @@ fi
 
 solana config set --url "$RPC_URL" >/dev/null
 
-# 2. Wallet balance
+# 2. Are the programs on-chain? Decides how much SOL the wallet needs.
+SODA_ID=$(awk -F\" '/^soda /{print $2}' contracts/Anchor.toml)
+ETH_DEMO_ID=$(awk -F\" '/^eth_demo /{print $2}' contracts/Anchor.toml)
+
+needs_deploy=0
+if ! solana program show "$SODA_ID" --url "$RPC_URL" >/dev/null 2>&1; then needs_deploy=1; fi
+if ! solana program show "$ETH_DEMO_ID" --url "$RPC_URL" >/dev/null 2>&1; then needs_deploy=1; fi
+
+# 3. Wallet balance. A deploy needs ~5 SOL of rent; a demo run costs a few
+# thousand lamports. The gate used to demand 5 SOL unconditionally, which
+# refused to run a demo on a wallet holding 4.99 SOL with everything deployed.
 step "Checking Solana wallet balance..."
 BAL_SOL_RAW=$(solana balance --url "$RPC_URL" 2>/dev/null | awk '{print $1}')
-BAL_SOL_INT=${BAL_SOL_RAW%%.*}
-if [[ "${BAL_SOL_INT:-0}" -lt 5 ]]; then
+BAL_LAMPORTS=$(awk -v b="${BAL_SOL_RAW:-0}" 'BEGIN{printf "%d", b*1000000000}')
+if [[ "$needs_deploy" -eq 1 ]]; then MIN_LAMPORTS=5000000000; else MIN_LAMPORTS=50000000; fi
+if [[ "$BAL_LAMPORTS" -lt "$MIN_LAMPORTS" ]]; then
     if [[ "$CLUSTER" == "local" ]]; then
         warn "balance ${BAL_SOL_RAW:-0} SOL — airdropping 100"
         solana airdrop 100 --url "$RPC_URL" >/dev/null 2>&1 || warn "airdrop failed; continuing"
@@ -101,20 +114,17 @@ if [[ "${BAL_SOL_INT:-0}" -lt 5 ]]; then
         warn "Fund the wallet manually:"
         warn "  wallet:  $WALLET_ADDR"
         warn "  faucet:  https://faucet.solana.com"
-        warn "  needed:  ~10 SOL (if programs aren't deployed yet) or ~0.1 SOL (if they are)"
-        warn "Re-run this script once the balance is at least 5 SOL."
+        if [[ "$needs_deploy" -eq 1 ]]; then
+            warn "  needed:  ~5 SOL (programs are not deployed yet)"
+        else
+            warn "  needed:  ~0.05 SOL (programs are deployed; a run costs a few thousand lamports)"
+        fi
         fail "insufficient balance"
     fi
 fi
 ok "wallet $(solana address) has $(solana balance --url "$RPC_URL")"
 
-# 3. Deploy programs if not on-chain
-SODA_ID=$(awk -F\" '/^soda /{print $2}' contracts/Anchor.toml)
-ETH_DEMO_ID=$(awk -F\" '/^eth_demo /{print $2}' contracts/Anchor.toml)
-
-needs_deploy=0
-if ! solana program show "$SODA_ID" --url "$RPC_URL" >/dev/null 2>&1; then needs_deploy=1; fi
-if ! solana program show "$ETH_DEMO_ID" --url "$RPC_URL" >/dev/null 2>&1; then needs_deploy=1; fi
+# 4. Deploy programs if not on-chain
 
 if [[ "$needs_deploy" -eq 1 ]]; then
     step "Programs missing on $CLUSTER — running anchor deploy..."
@@ -131,12 +141,12 @@ fi
 ok "soda     deployed at $SODA_ID${EXPLORER_BASE:+  ($EXPLORER_BASE/account/$SODA_ID${CLUSTER:+?cluster=$CLUSTER})}"
 ok "eth_demo deployed at $ETH_DEMO_ID${EXPLORER_BASE:+  ($EXPLORER_BASE/account/$ETH_DEMO_ID${CLUSTER:+?cluster=$CLUSTER})}"
 
-# 4. Run the demo
+# 5. Run the demo
 step "Running demo..."
 rm -f .last-tx-hash
 pnpm demo
 
-# 5. If the demo broadcast a real ETH tx, run the verify pass on it.
+# 6. If the demo broadcast a real ETH tx, run the verify pass on it.
 if [[ -f .last-tx-hash ]]; then
     LAST_TX=$(cat .last-tx-hash)
     if [[ -n "$LAST_TX" ]]; then

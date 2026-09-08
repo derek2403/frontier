@@ -57,34 +57,6 @@ export default function DerivedAddressCard({
         </div>
       </div>
 
-      {/* Funding is automatic from the sponsor key, so this is a fallback for
-          when the sponsor is unset or dry — not the normal path. */}
-      {sepoliaBalanceWei !== null && sepoliaBalanceWei < 1_500_000_000_000_000n ? (
-        <div className="mt-6 rounded-lg bg-amber-950/40 border border-amber-900 p-3 text-sm text-amber-200">
-          <div className="font-medium">
-            Will be topped up automatically on sign
-          </div>
-          <div className="mt-1 text-xs text-amber-200/70">
-            The sponsor key funds this address before broadcasting. If that is
-            unavailable, fund it manually:
-          </div>
-          <ul className="mt-2 space-y-1">
-            {CHAIN.faucets.map((href) => (
-              <li key={href}>
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="break-all underline hover:text-amber-100"
-                >
-                  {href}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
       {ethAddress && CHAIN.aave ? (
         <div className="mt-4 text-xs text-zinc-500">
           <a

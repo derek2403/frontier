@@ -77,16 +77,23 @@ The CLI is the canonical demo path.
 ./demo.sh
 ```
 
-Defaults to Solana devnet and a self-transfer of 0.0001 ETH on Sepolia. After a
-successful broadcast, `demo.sh` automatically runs `pnpm verify <hash>`, which
-prints the cryptographic audit trail (six checks tying the Solana `SigRequest`
-PDA to the broadcast Sepolia transaction).
+Defaults to Solana devnet and an Aave V3 `depositETH` of 0.0001 ETH: the
+derived address ends up holding aWETH, a lending position owned by a Solana
+account. After a successful broadcast, `demo.sh` automatically runs
+`pnpm verify <hash>`, which prints the cryptographic audit trail (the checks
+tying the Solana `SigRequest` PDA to the broadcast EVM transaction).
 
 ```bash
-DEMO_RECIPIENT=0xSomeAddress ./demo.sh   # send to a specific recipient
-SODA_DRY_RUN=1 ./demo.sh                 # skip Sepolia, verify on-chain only
+DEMO_ACTION=borrow ./demo.sh             # Pool.borrow 0.1 USDC against the aWETH
+DEMO_CHAIN=base-sepolia ./demo.sh        # destination chain: sepolia | base-sepolia
+SODA_DRY_RUN=1 ./demo.sh                 # skip the EVM broadcast, verify on-chain only
 SOLANA_CLUSTER=local ./demo.sh           # against a local validator
 ```
+
+The borrow is the proof of control: a deposit could be read as "sent ETH to a
+contract", but only the position's owner can borrow against it, and the
+derived address ends up holding USDC it never had. Both actions go through
+the same pipeline; only the calldata differs.
 
   </Tabs.Tab>
   <Tabs.Tab>
@@ -96,9 +103,13 @@ pnpm --filter web dev
 # open http://localhost:3000
 ```
 
-The page auto-derives the ETH address, polls Sepolia balance, and runs the
-pipeline server-side via `/api/run` (an SSE stream of pipeline events). The
-five-step timeline animates as events arrive.
+Three steps: connect Phantom, derive the EVM address, then act on Aave —
+deposit ETH or borrow USDC. Phantom signs `sign_eth_transfer`; the server
+signs the payload, submits `finalize_signature`, and broadcasts. A live card
+shows Aave's own view of the derived address (supplied, borrowed, collateral,
+health factor, rates), read from the Pool with `eth_call`. The deployed
+instance needs the environment variables listed in
+[Deploy the web demo to Vercel](/deploy/vercel-web).
 
   </Tabs.Tab>
   <Tabs.Tab>
