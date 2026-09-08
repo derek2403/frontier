@@ -1,106 +1,61 @@
-// The Ethereum address derived from the committee's group_pk. This is the
-// evidence the page exists to show, so it is the focal object rather than one
-// card among several: the address gets display scale, and the figures that
-// qualify it sit on a shared baseline beneath it.
+// Shows the deterministic ETH address derived from (eth_demo program ID, seeds,
+// chain tag) — same address every load until keyshare.dev.json changes server-side.
 
 type Props = {
   ethAddress: string | null;
   sepoliaBalanceWei: bigint | null;
   loading?: boolean;
-  /** Base58 pubkey of the connected wallet the address is derived from. */
-  derivedFrom?: string | null;
 };
 
 const FAUCETS = [
-  { name: "Alchemy", href: "https://www.alchemy.com/faucets/ethereum-sepolia" },
+  { name: "Alchemy Sepolia faucet", href: "https://www.alchemy.com/faucets/ethereum-sepolia" },
   { name: "sepoliafaucet.com", href: "https://sepoliafaucet.com/" },
-  { name: "QuickNode", href: "https://faucet.quicknode.com/ethereum/sepolia" },
+  { name: "QuickNode Sepolia faucet", href: "https://faucet.quicknode.com/ethereum/sepolia" },
 ];
-
-// Below this the demo cannot cover gas, so the run fails before it builds a
-// transaction. Same threshold as run-demo.ts.
-const FUNDING_THRESHOLD_WEI = 200_000_000_000_000n;
 
 function formatEth(wei: bigint | null): string {
   if (wei === null) return "—";
-  return `${(Number(wei) / 1e18).toFixed(6)} ETH`;
+  const eth = Number(wei) / 1e18;
+  return `${eth.toFixed(6)} ETH`;
 }
 
-export default function DerivedAddressCard({
-  ethAddress,
-  sepoliaBalanceWei,
-  loading,
-  derivedFrom,
-}: Props) {
-  const underfunded =
-    sepoliaBalanceWei !== null && sepoliaBalanceWei < FUNDING_THRESHOLD_WEI;
-
+export default function DerivedAddressCard({ ethAddress, sepoliaBalanceWei, loading }: Props) {
   return (
-    <section aria-labelledby="derived-address">
-      <h2 id="derived-address" className="text-sm text-secondary">
-        Your wallet&apos;s Ethereum address
-      </h2>
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-100">
+      <div className="text-xs uppercase tracking-wider text-zinc-500">
+        Solana-derived ETH address
+      </div>
+      <div className="mt-2 break-all font-mono text-lg">
+        {loading ? "deriving…" : ethAddress ?? "—"}
+      </div>
 
-      <p className="mt-3 font-mono text-xl leading-tight break-all sm:text-2xl">
-        {loading ? (
-          <span className="text-tertiary">deriving…</span>
-        ) : (
-          ethAddress ?? "—"
-        )}
-      </p>
-
-      <dl className="mt-8 grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-2 gap-4 text-sm">
         <div>
-          <dt className="text-sm text-secondary">Sepolia balance</dt>
-          <dd className="tabular mt-1.5 font-mono text-base">
-            {formatEth(sepoliaBalanceWei)}
-          </dd>
+          <div className="text-xs uppercase tracking-wider text-zinc-500">
+            Sepolia balance
+          </div>
+          <div className="mt-1 font-mono">{formatEth(sepoliaBalanceWei)}</div>
         </div>
         <div>
-          <dt className="text-sm text-secondary">Chain</dt>
-          <dd className="tabular mt-1.5 font-mono text-base">Sepolia · 11155111</dd>
+          <div className="text-xs uppercase tracking-wider text-zinc-500">Chain</div>
+          <div className="mt-1 font-mono">Sepolia (11155111)</div>
         </div>
-        <div>
-          <dt className="text-sm text-secondary">Private key</dt>
-          <dd className="mt-1.5 text-base">None exists</dd>
-        </div>
-      </dl>
+      </div>
 
-      {derivedFrom ? (
-        <p className="mt-6 max-w-2xl text-sm leading-relaxed text-secondary">
-          Derived from{" "}
-          <span className="font-mono text-primary">{derivedFrom}</span>. The
-          SODA program computes this address on-chain from the account that
-          signs, so connecting a different wallet produces a different address
-          and no caller can request a signature for one that is not theirs.
-        </p>
-      ) : null}
-
-      {underfunded ? (
-        <div className="mt-8 border-l-2 border-warning pl-4">
-          <p className="text-sm font-medium text-warning">
-            Needs at least 0.0002 Sepolia ETH to cover gas
-          </p>
-          <p className="mt-1.5 text-sm text-secondary">
-            The run stops before building a transaction until this address can
-            pay. Fund it at{" "}
-            {FAUCETS.map((f, i) => (
-              <span key={f.href}>
-                {i > 0 ? ", " : ""}
-                <a
-                  className="underline underline-offset-2 hover:text-primary"
-                  href={f.href}
-                  target="_blank"
-                  rel="noreferrer"
-                >
+      {sepoliaBalanceWei !== null && sepoliaBalanceWei < 200_000_000_000_000n ? (
+        <div className="mt-6 rounded-lg bg-amber-950/40 border border-amber-900 p-3 text-sm text-amber-200">
+          <div className="font-medium">Address needs ~0.001 Sepolia ETH</div>
+          <ul className="mt-2 space-y-1">
+            {FAUCETS.map((f) => (
+              <li key={f.href}>
+                <a className="underline hover:text-amber-100" href={f.href} target="_blank" rel="noreferrer">
                   {f.name}
                 </a>
-              </span>
+              </li>
             ))}
-            .
-          </p>
+          </ul>
         </div>
       ) : null}
-    </section>
+    </div>
   );
 }

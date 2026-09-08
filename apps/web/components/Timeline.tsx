@@ -1,7 +1,4 @@
 // Five-step progress display, driven by event-subscription state in the parent.
-//
-// Status is carried by a word, not only by a mark, so it survives greyscale
-// and screen readers. The marks are monochrome except for a genuine failure.
 
 export type Step = "idle" | "active" | "done" | "error";
 
@@ -22,125 +19,75 @@ const STEPS: Array<{
   {
     key: "signEthTransfer",
     label: "Solana: sign_eth_transfer",
-    sub: "Phantom signs. eth_demo builds the RLP and calls into SODA.",
+    sub: "Phantom signs · eth_demo builds RLP and CPIs SODA",
   },
   {
     key: "sigRequested",
     label: "SigRequested emitted",
-    sub: "The SigRequest account is created on-chain.",
+    sub: "SigRequest PDA created on-chain",
   },
   {
     key: "signOffChain",
-    label: "MPC committee signs",
-    sub: "The coordinator relays four messages between P1 and P2.",
+    label: "MPC committee · 2-of-2 Lindell '17",
+    sub: "Coordinator drives a 4-message protocol between P1 and P2",
     details: [
-      "P1 → message 1   commitment to k1·G",
-      "P2 → message 2   k2·G with Schnorr proof",
-      "P1 → message 3   opens commitment, Schnorr proof",
-      "P2 → message 4   Paillier-homomorphic partial signature",
-      "P1 decrypts and exports (r, s, recovery_id)",
+      "1. P1 → message1   (commitment to k1·G)",
+      "2. P2 → message2   (k2·G + Schnorr proof)",
+      "3. P1 → message3   (open commit + Schnorr proof)",
+      "4. P2 → message4   (Paillier-homomorphic partial sig)",
+      "P1 decrypts, finalizes (r, s, recovery_id)",
     ],
   },
   {
     key: "finalizeOnChain",
     label: "Solana: finalize_signature",
-    sub: "secp256k1_recover checks the signature against the stored foreign_pk_xy.",
+    sub: "secp256k1_recover verifies the MPC sig matches stored foreign_pk_xy",
   },
   {
     key: "broadcastEth",
     label: "Broadcast to Sepolia",
-    sub: "eth_sendRawTransaction.",
+    sub: "eth_sendRawTransaction",
   },
 ];
 
-const STATUS: Record<Step, string> = {
-  idle: "Waiting",
-  active: "Running",
-  done: "Done",
-  error: "Failed",
-};
-
-function Marker({ step }: { step: Step }) {
-  if (step === "error") {
-    return <span className="mt-[7px] block h-2.5 w-2.5 rounded-full bg-error" />;
-  }
-  if (step === "done") {
-    return (
-      <span className="mt-[7px] block h-2.5 w-2.5 rounded-full bg-surface-contrast" />
-    );
-  }
-  if (step === "active") {
-    return (
-      <span className="mt-[7px] block h-2.5 w-2.5 rounded-full border-2 border-strong bg-surface" />
-    );
-  }
-  return (
-    <span className="mt-[7px] block h-2.5 w-2.5 rounded-full border border-default bg-surface" />
-  );
+function dot(step: Step) {
+  const base = "h-3 w-3 rounded-full";
+  if (step === "done") return <div className={`${base} bg-emerald-500`} />;
+  if (step === "active") return <div className={`${base} bg-amber-400 animate-pulse`} />;
+  if (step === "error") return <div className={`${base} bg-rose-500`} />;
+  return <div className={`${base} bg-zinc-700`} />;
 }
 
 export default function Timeline({ state }: { state: TimelineState }) {
   return (
-    <section aria-labelledby="pipeline">
-      <h2 id="pipeline" className="text-sm font-medium">
-        Pipeline
-      </h2>
-
-      <ol className="mt-6">
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+      <div className="text-xs uppercase tracking-wider text-zinc-500">Pipeline</div>
+      <ol className="mt-4 space-y-4">
         {STEPS.map((s, i) => {
           const step = state[s.key];
-          const last = i === STEPS.length - 1;
           return (
-            <li key={s.key} className="flex gap-4">
-              {/* Marker column: the rule connects steps into one sequence. */}
-              <div className="flex flex-col items-center">
-                <Marker step={step} />
-                {!last ? (
-                  <span className="my-1.5 w-px flex-1 bg-subtle" aria-hidden />
-                ) : null}
+            <li key={s.key} className="flex items-start gap-3">
+              <div className="flex flex-col items-center pt-1">
+                {dot(step)}
+                {i < STEPS.length - 1 ? <div className="mt-1 h-8 w-px bg-zinc-800" /> : null}
               </div>
-
-              <div className={last ? "flex-1" : "flex-1 pb-8"}>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                  <span
-                    className={
-                      step === "idle"
-                        ? "text-sm text-tertiary"
-                        : "text-sm font-medium"
-                    }
-                  >
-                    {s.label}
-                  </span>
-                  <span
-                    className={
-                      step === "error"
-                        ? "text-sm text-error"
-                        : "text-sm text-secondary"
-                    }
-                  >
-                    {STATUS[step]}
-                  </span>
+              <div className="flex-1">
+                <div className={step === "idle" ? "text-zinc-500" : "text-zinc-100"}>
+                  {s.label}
                 </div>
-
-                <p className="mt-1 text-sm text-secondary">{s.sub}</p>
-
+                <div className="text-xs text-zinc-500">{s.sub}</div>
                 {s.details && step !== "idle" ? (
-                  <ol className="mt-3 space-y-1 border-l border-subtle pl-4">
+                  <ul className="mt-2 space-y-0.5 rounded-lg bg-zinc-950/60 px-3 py-2 font-mono text-[11px] text-emerald-300/70">
                     {s.details.map((d) => (
-                      <li
-                        key={d}
-                        className="font-mono text-xs whitespace-pre-wrap text-secondary"
-                      >
-                        {d}
-                      </li>
+                      <li key={d}>{d}</li>
                     ))}
-                  </ol>
+                  </ul>
                 ) : null}
               </div>
             </li>
           );
         })}
       </ol>
-    </section>
+    </div>
   );
 }

@@ -1,13 +1,6 @@
 import { useState } from "react";
 
-// The raw signed transaction, kept as audit-path evidence: quiet, available,
-// and never competing with the result above it.
-
-export default function SignedHexView({
-  signedRlpHex,
-}: {
-  signedRlpHex: string | null;
-}) {
+export default function SignedHexView({ signedRlpHex }: { signedRlpHex: string | null }) {
   const [copied, setCopied] = useState(false);
   if (!signedRlpHex) return null;
 
@@ -18,21 +11,19 @@ export default function SignedHexView({
   };
 
   return (
-    <section aria-labelledby="signed-rlp" className="mt-12">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 id="signed-rlp" className="text-sm font-medium">
-          Signed transaction
-        </h2>
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+      <div className="flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wider text-zinc-500">Signed RLP</div>
         <button
           onClick={onCopy}
-          className="text-sm text-secondary underline-offset-4 transition hover:text-primary hover:underline"
+          className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-700"
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? "copied" : "copy"}
         </button>
       </div>
-      <p className="mt-3 font-mono text-sm leading-relaxed break-all text-secondary">
+      <div className="mt-3 break-all font-mono text-xs text-zinc-300">
         {signedRlpHex}
-      </p>
-    </section>
+      </div>
+    </div>
   );
 }

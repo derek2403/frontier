@@ -1,6 +1,6 @@
-// Primary action. Monochrome: it is the only filled control on the page, so
-// contrast alone makes it the obvious next step. Green would have claimed a
-// meaning the button does not carry.
+// The button that kicks off the whole pipeline. Live wiring lands in the next
+// task; for now this is a stub that just calls onClick so the parent can simulate
+// state transitions while the layout is being built.
 
 type Props = {
   disabled?: boolean;
@@ -13,9 +13,9 @@ export default function SignAndSendButton({ disabled, busy, onClick }: Props) {
     <button
       disabled={disabled || busy}
       onClick={() => void onClick()}
-      className="h-11 w-full rounded-md bg-surface-contrast px-5 text-sm font-medium text-on-contrast transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+      className="w-full rounded-2xl bg-emerald-500 px-6 py-4 text-base font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"
     >
-      {busy ? "Signing…" : "Sign and broadcast 0.0001 ETH"}
+      {busy ? "Signing…" : "Sign & broadcast 0.0001 ETH (self-transfer)"}
     </button>
   );
 }
