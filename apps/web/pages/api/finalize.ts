@@ -69,6 +69,8 @@ type FinalizeReq = {
   gasLimit: string;
   /** Decimal string */
   valueWei: string;
+  /** Hex calldata (with or without 0x). Empty/absent for a plain transfer. */
+  dataHex?: string;
 };
 
 type FinalizeRes = {
@@ -155,6 +157,11 @@ export default async function handler(
     const gasPriceWei = BigInt(body.gasPriceWei);
     const gasLimit = BigInt(body.gasLimit);
     const valueWei = BigInt(body.valueWei);
+    const dataClean = (body.dataHex ?? "").replace(/^0x/, "");
+    if (dataClean.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(dataClean)) {
+      return res.status(400).json({ error: "dataHex must be even-length hex" });
+    }
+    const data = Uint8Array.from(Buffer.from(dataClean, "hex"));
 
     const connection = new Connection(solanaRpc(), "confirmed");
 
@@ -285,7 +292,9 @@ export default async function handler(
       gasLimit,
       to: new Uint8Array(recipient),
       valueWeiBe,
-      data: new Uint8Array(0),
+      // Must match what the browser committed on-chain byte-for-byte; the
+      // payload-recompute guard below is what catches a mismatch.
+      data,
       chainId: SEPOLIA_CHAIN_ID,
     };
     // Sanity: the keccak of unsignedRlp must match the on-chain payload

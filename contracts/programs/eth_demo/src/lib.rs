@@ -6,19 +6,12 @@ pub mod state;
 
 declare_id!("9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx");
 
-pub const ETH_SEPOLIA_CHAIN_ID: u64 = 11_155_111;
-
-/// 32-byte ASCII chain tag, right-padded with zeros: "ethereum-sepolia\0..."
-pub const fn eth_sepolia_chain_tag() -> [u8; 32] {
-    let mut tag = [0u8; 32];
-    let s = b"ethereum-sepolia";
-    let mut i = 0;
-    while i < s.len() {
-        tag[i] = s[i];
-        i += 1;
-    }
-    tag
-}
+// The chain is no longer a compile-time constant. `chain_id` and `chain_tag`
+// arrive as instruction arguments, so one deployment serves every EVM chain:
+// chain_id goes into the EIP-155 RLP (and so into the signed payload), and
+// chain_tag goes into the derivation. Letting the caller choose the tag is
+// safe — the derivation is still bound to the signer, so a different tag only
+// gives the SAME owner a DIFFERENT address, never someone else's.
 
 #[program]
 pub mod eth_demo {
@@ -27,6 +20,11 @@ pub mod eth_demo {
     /// `foreign_pk_xy` is gone: soda now derives the foreign key itself from
     /// the signer, so this program cannot name an address on a user's behalf
     /// and a malicious client cannot name one at all.
+    ///
+    /// `data` is the transaction calldata. Empty for a plain ETH transfer; a
+    /// contract call (e.g. Aave's depositETH) puts its ABI-encoded selector +
+    /// args here. The program does not interpret it — it is RLP-encoded into
+    /// the payload like any other field, so the signature commits to it.
     pub fn sign_eth_transfer(
         ctx: Context<SignEthTransfer>,
         to: [u8; 20],
@@ -34,6 +32,9 @@ pub mod eth_demo {
         nonce: u64,
         gas_price_wei: u64,
         gas_limit: u64,
+        data: Vec<u8>,
+        chain_id: u64,
+        chain_tag: [u8; 32],
         derivation_seeds: Vec<u8>,
     ) -> Result<()> {
         require_keys_eq!(ctx.accounts.soda_program.key(), soda::ID);
@@ -45,8 +46,8 @@ pub mod eth_demo {
             gas_limit,
             &to,
             &value_wei_be,
-            &[],
-            ETH_SEPOLIA_CHAIN_ID,
+            &data,
+            chain_id,
         );
 
         // 2. keccak256 sighash — this is what the signer needs to sign.
@@ -66,7 +67,7 @@ pub mod eth_demo {
             cpi_ctx,
             derivation_seeds,
             payload,
-            eth_sepolia_chain_tag(),
+            chain_tag,
             0, // domain_id: secp256k1 ECDSA
         )?;
 
@@ -74,7 +75,7 @@ pub mod eth_demo {
         //    once the signature lands via SigCompleted.
         emit!(EthTxRequested {
             sig_request: ctx.accounts.sig_request.key(),
-            chain_id: ETH_SEPOLIA_CHAIN_ID,
+            chain_id,
             unsigned_rlp,
         });
 

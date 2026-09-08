@@ -14,6 +14,11 @@ import SignAndSendButton from "@/components/SignAndSendButton";
 import SignedHexView from "@/components/SignedHexView";
 import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
+  AAVE_DEPOSIT_GAS_LIMIT,
+  AAVE_DEPOSIT_MIN_BALANCE_WEI,
+  AAVE_V3_SEPOLIA,
+  addressToBytes,
+  depositEthCalldata,
   bigintToBe,
   computeTweak,
   deriveForeignPk,
@@ -80,6 +85,10 @@ type RunResult = {
 
 export default function Home() {
   const [groupPkHex, setGroupPkHex] = useState<string | null>(null);
+  // What the signed transaction does. "transfer" is the original self-send;
+  // "aave" deposits into Aave V3 so the derived address holds a lending
+  // position. Same pipeline either way — only `to`, `data` and gas differ.
+  const [action, setAction] = useState<"transfer" | "aave">("aave");
   const [ethAddress, setEthAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [timeline, setTimeline] = useState<TimelineState>(INITIAL_TIMELINE);
@@ -173,12 +182,19 @@ export default function Home() {
     // Gas is paid by the tx's `from`, so this address needs ETH of its own.
     // /api/fund is idempotent and returns immediately if already funded, and
     // this runs inside `busy` because confirmation can take a minute or two.
-    if (!isFunded) {
+    // A contract call needs more than a 21k transfer; ask the sponsor for the
+    // action-appropriate amount rather than the flat transfer threshold.
+    const requiredWei =
+      action === "aave" ? AAVE_DEPOSIT_MIN_BALANCE_WEI : 200_000_000_000_000n;
+    if (balance === null || balance < requiredWei) {
       try {
         const fundRes = await fetch("/api/fund", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ address: ethAddress }),
+          body: JSON.stringify({
+            address: ethAddress,
+            minWei: requiredWei.toString(),
+          }),
         });
         const fundJson = (await fundRes.json()) as {
           funded?: boolean;
@@ -241,15 +257,28 @@ export default function Home() {
       const gasPrice = baseGasPrice + salt;
       const valueWei = 100_000_000_000_000n; // 0.0001 ETH
       const valueWeiBe = bigintToBe(valueWei, 16);
-      const gasLimit = 21_000n;
+
+      // Where the tx goes and what it carries, by action. For Aave, `to` is
+      // the gateway and `onBehalfOf` inside the calldata is the DERIVED
+      // address, so the resulting aWETH is held by the Solana-controlled
+      // account — not by the sponsor, not by the user's Phantom wallet.
+      const txTo: Uint8Array =
+        action === "aave"
+          ? addressToBytes(AAVE_V3_SEPOLIA.WETH_GATEWAY)
+          : new Uint8Array(recipient);
+      const txData: Uint8Array =
+        action === "aave"
+          ? depositEthCalldata(ethAddrBytes)
+          : new Uint8Array(0);
+      const gasLimit = action === "aave" ? AAVE_DEPOSIT_GAS_LIMIT : 21_000n;
 
       const unsignedRlp = encodeUnsignedLegacy({
         nonce,
         gasPriceWei: gasPrice,
         gasLimit,
-        to: new Uint8Array(recipient),
+        to: txTo,
         valueWeiBe,
-        data: new Uint8Array(0),
+        data: txData,
         chainId: 11_155_111n,
       });
       const payload = keccak_256(unsignedRlp);
@@ -278,11 +307,12 @@ export default function Home() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const signTxSig: string = await (ethDemoProgram.methods as any)
         .signEthTransfer(
-          Array.from(recipient),
+          Array.from(txTo),
           Array.from(valueWeiBe),
           new BN(nonce.toString()),
           new BN(gasPrice.toString()),
           new BN(gasLimit.toString()),
+          Buffer.from(txData),
           Buffer.from(derivationSeeds),
         )
         .accounts({
@@ -304,7 +334,10 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sigRequestPda: sigRequestPda.toBase58(),
-          recipientHex,
+          // `to` and `data` must be exactly what was committed on-chain;
+          // /api/finalize re-encodes and refuses on a payload mismatch.
+          recipientHex: bytesToHex(txTo),
+          dataHex: bytesToHex(txData),
           nonce: nonce.toString(),
           gasPriceWei: gasPrice.toString(),
           gasLimit: gasLimit.toString(),
@@ -481,9 +514,64 @@ export default function Home() {
               />
             </div>
 
+            {/* Action selector. Same pipeline either way — only the tx's
+                `to`, `data` and gas differ — which is the point: the signing
+                primitive doesn't care what the transaction does. */}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+              <div className="text-xs uppercase tracking-wider text-zinc-500">
+                Action
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setAction("aave")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    action === "aave"
+                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
+                      : "border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500"
+                  }`}
+                >
+                  Deposit into Aave V3
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setAction("transfer")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    action === "transfer"
+                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
+                      : "border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500"
+                  }`}
+                >
+                  Self-transfer
+                </button>
+              </div>
+              <p className="mt-3 text-xs text-zinc-500">
+                {action === "aave" ? (
+                  <>
+                    Calls{" "}
+                    <code className="font-mono">
+                      WrappedTokenGatewayV3.depositETH
+                    </code>{" "}
+                    on Sepolia with 0.0001 ETH. The derived address receives
+                    aWETH — a lending position held by a Solana account. The
+                    recipient field above is ignored.
+                  </>
+                ) : (
+                  <>Sends 0.0001 ETH to the recipient (defaults to itself).</>
+                )}
+              </p>
+            </div>
+
             <SignAndSendButton
               disabled={buttonDisabled}
               busy={busy}
+              label={
+                action === "aave"
+                  ? "Sign & deposit 0.0001 ETH into Aave V3"
+                  : "Sign & broadcast 0.0001 ETH (self-transfer)"
+              }
               onClick={onSign}
             />
           </>

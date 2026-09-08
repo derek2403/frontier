@@ -21,6 +21,12 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AAVE_DEPOSIT_GAS_LIMIT,
+  AAVE_DEPOSIT_MIN_BALANCE_WEI,
+  addressToBytes,
+  chainRpcUrl,
+  depositEthCalldata,
+  getChain,
   bigintToBe,
   bytesToBigInt,
   computeTweak,
@@ -28,15 +34,15 @@ import {
   eip155V,
   encodeSignedLegacy,
   encodeUnsignedLegacy,
-  ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
 
-const sepolia = new EthRpc(
-  process.env.SEPOLIA_RPC_URL ?? "https://rpc.sepolia.org",
-);
+// DEMO_CHAIN selects the destination EVM chain (sepolia | base-sepolia).
+// Must precede the RPC client, which is built from it at module init.
+const CHAIN = getChain(process.env.DEMO_CHAIN);
 
+const sepolia = new EthRpc(chainRpcUrl(CHAIN));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "../../..");
@@ -44,8 +50,16 @@ const SODA_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/soda.json");
 const ETH_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json");
 const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
 
-const SEPOLIA_CHAIN_ID = 11_155_111n;
-const FUNDING_THRESHOLD_WEI = 200_000_000_000_000n; // 0.0002 ETH; covers value + gas
+const CHAIN_ID = CHAIN.chainId;
+// DEMO_ACTION=aave switches the transaction from a self-transfer to an Aave V3
+// depositETH call. The derived address then holds aWETH — a lending position
+// owned by a Solana account — instead of just having moved ETH to itself.
+const AAVE = process.env.DEMO_ACTION?.trim().toLowerCase() === "aave";
+// A contract call needs far more gas headroom than a 21k transfer, so the
+// funding target follows the action. The sponsor tops up to this level.
+const FUNDING_THRESHOLD_WEI = AAVE
+  ? AAVE_DEPOSIT_MIN_BALANCE_WEI // 0.0015 ETH: deposit + ~300k gas
+  : 200_000_000_000_000n; // 0.0002 ETH; covers value + gas
 const VALUE_WEI = 100_000_000_000_000n; // 0.0001 ETH per demo run
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -136,7 +150,7 @@ async function fundFromSponsor(
     to: Uint8Array.from(Buffer.from(target.replace(/^0x/, ""), "hex")),
     valueWeiBe: bigintToBe(topUp, 16),
     data: new Uint8Array(0),
-    chainId: SEPOLIA_CHAIN_ID,
+    chainId: CHAIN_ID,
   });
   const sig = secp256k1.sign(keccak_256(unsigned), sk, { lowS: true });
   const signed = encodeSignedLegacy(
@@ -148,13 +162,13 @@ async function fundFromSponsor(
       valueWeiBe: bigintToBe(topUp, 16),
       data: new Uint8Array(0),
     },
-    eip155V(sig.recovery!, SEPOLIA_CHAIN_ID),
+    eip155V(sig.recovery!, CHAIN_ID),
     bigintToBe(sig.r, 32),
     bigintToBe(sig.s, 32),
   );
 
   const hash = await sepolia.sendRawTransaction(bytesToHex(signed));
-  console.log(`  → sponsored ${topUp} wei: https://sepolia.etherscan.io/tx/${hash}`);
+  console.log(`  → sponsored ${topUp} wei: ${CHAIN.explorerTx(hash)}`);
 
   // Wait for the balance to actually move rather than for a receipt: the
   // balance is the thing the next step depends on.
@@ -273,7 +287,7 @@ async function main() {
   const tweak = computeTweak(
     walletKp.publicKey.toBytes(),
     derivationSeeds,
-    ETH_SEPOLIA_CHAIN_TAG,
+    CHAIN.chainTag,
   );
   const foreignPk = deriveForeignPk(groupPkCompressed, tweak);
   const ethAddress = bytesToHex(ethAddressFromPk(foreignPk));
@@ -330,10 +344,29 @@ async function main() {
   const bumpedGasPrice = (fetchedGasPrice * 110n) / 100n;
   const gasPrice = bumpedGasPrice > MIN_GAS_PRICE ? bumpedGasPrice : MIN_GAS_PRICE;
   const valueWeiBe = bigintToBe(VALUE_WEI, 16);
-  const gasLimit = 21_000n;
+
+  // Where the tx goes and what it carries, by action. For Aave, `to` is the
+  // gateway and `onBehalfOf` in the calldata is the DERIVED address, so the
+  // aWETH lands at the Solana-controlled account rather than anywhere else.
+  if (AAVE && !CHAIN.aave) {
+    throw new Error(`DEMO_ACTION=aave but ${CHAIN.name} has no Aave V3 deployment configured`);
+  }
+  const txTo: Uint8Array = AAVE
+    ? addressToBytes(CHAIN.aave!.WETH_GATEWAY)
+    : recipient;
+  const txData: Uint8Array = AAVE
+    ? depositEthCalldata(CHAIN.aave!, ethAddressFromPk(foreignPk))
+    : new Uint8Array(0);
+  const gasLimit = AAVE ? AAVE_DEPOSIT_GAS_LIMIT : 21_000n;
+  const txToHex = bytesToHex(txTo);
 
   console.log("Tx:");
-  console.log(`  to:        ${recipientHex}`);
+  console.log(`  chain:     ${CHAIN.name} (chainId ${CHAIN_ID})`);
+  if (AAVE) {
+    console.log(`  action:    Aave V3 depositETH → aWETH to ${ethAddress}`);
+  }
+  console.log(`  to:        ${txToHex}${AAVE ? "  (WrappedTokenGatewayV3)" : ""}`);
+  if (AAVE) console.log(`  data:      ${bytesToHex(txData).slice(0, 10)}… (${txData.length} bytes)`);
   console.log(`  value:     ${VALUE_WEI} wei (0.0001 ETH)`);
   console.log(`  nonce:     ${nonce}`);
   console.log(`  gasPrice:  ${gasPrice} wei`);
@@ -343,10 +376,10 @@ async function main() {
     nonce,
     gasPriceWei: gasPrice,
     gasLimit,
-    to: recipient,
+    to: txTo,
     valueWeiBe,
-    data: new Uint8Array(0),
-    chainId: SEPOLIA_CHAIN_ID,
+    data: txData,
+    chainId: CHAIN_ID,
   });
   const payload = keccak_256(unsignedRlp);
   console.log(`  payload:   ${bytesToHex(payload)}`);
@@ -372,11 +405,14 @@ async function main() {
   console.log("\n[1/3] eth_demo::sign_eth_transfer  (Solana program builds RLP, CPIs SODA)");
   const signTxSig = await (ethDemoProgram.methods as any)
     .signEthTransfer(
-      Array.from(recipient),
+      Array.from(txTo),
       Array.from(valueWeiBe),
       new BN(nonce.toString()),
       new BN(gasPrice.toString()),
       new BN(gasLimit.toString()),
+      Buffer.from(txData),
+      new BN(CHAIN_ID.toString()),
+      Array.from(CHAIN.chainTag),
       Buffer.from(derivationSeeds),
     )
     .accounts({
@@ -457,15 +493,15 @@ async function main() {
   if (!sigRequest.completed) throw new Error("SigRequest still incomplete");
 
   // --- 8. Assemble + broadcast ---
-  const v = eip155V(recoveryId, SEPOLIA_CHAIN_ID);
+  const v = eip155V(recoveryId, CHAIN_ID);
   const signedRlp = encodeSignedLegacy(
     {
       nonce,
       gasPriceWei: gasPrice,
       gasLimit,
-      to: recipient,
+      to: txTo,
       valueWeiBe,
-      data: new Uint8Array(0),
+      data: txData,
     },
     v,
     sigBytes.subarray(0, 32),
@@ -513,7 +549,7 @@ async function main() {
   const isSelfTransfer = recipientHex.toLowerCase() === ethAddress.toLowerCase();
 
   banner("DONE — open these in a browser:");
-  console.log(`  ETH side (Sepolia):    https://sepolia.etherscan.io/tx/${ethTxHash}`);
+  console.log(`  ETH side (${CHAIN.name}):  ${CHAIN.explorerTx(ethTxHash)}`);
   if (solanaCluster !== "local") {
     console.log(`  Solana side (${solanaCluster}):  ${solscanTx(signTxSig)}`);
     console.log(`                          ${solscanTx(finalSig)}`);
