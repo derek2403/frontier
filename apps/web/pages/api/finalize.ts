@@ -20,7 +20,9 @@ import {
 import {
   bigintToBe,
   bytesToBigInt,
+  chainRpcUrl,
   computeTweak,
+  getChain,
   eip155V,
   encodeSignedLegacy,
   encodeUnsignedLegacy,
@@ -54,7 +56,11 @@ function loadOrCreateSignerKey(): Uint8Array {
   return sk;
 }
 
-const SEPOLIA_CHAIN_ID = 11_155_111n;
+// Same DEMO_CHAIN the CLI uses. The chain id goes into the EIP-155 RLP that
+// this route re-encodes, and the payload-recompute guard below fails loudly
+// if it disagrees with what the browser committed on-chain.
+const CHAIN = getChain(process.env.DEMO_CHAIN);
+const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 
 type FinalizeReq = {
   /** Base58 PublicKey of the SigRequest PDA created by sign_eth_transfer */
@@ -79,15 +85,10 @@ type FinalizeRes = {
   finalizeSignatureTx: string;
   recoveryId: number;
   ethAddress: string;
-  isSelfTransfer: boolean;
 };
 
 function sepoliaRpc(): string {
-  return (
-    process.env.SEPOLIA_RPC_URL ??
-    process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
-    "https://rpc.sepolia.org"
-  );
+  return chainRpcUrl(CHAIN);
 }
 
 function solanaRpc(): string {
@@ -325,9 +326,6 @@ export default async function handler(
     const fpkXy: Uint8Array = Uint8Array.from(sigRequest.foreignPkXy);
     const ethAddrBytes = keccak_256(fpkXy).subarray(12);
     const ethAddress = "0x" + Buffer.from(ethAddrBytes).toString("hex");
-    const recipientHexNormalized = "0x" + Buffer.from(recipient).toString("hex");
-    const isSelfTransfer =
-      recipientHexNormalized.toLowerCase() === ethAddress.toLowerCase();
 
     // Stash the ETH tx hash for `pnpm verify`.
     try {
@@ -342,7 +340,6 @@ export default async function handler(
       finalizeSignatureTx,
       recoveryId,
       ethAddress,
-      isSelfTransfer,
     };
     return res.status(200).json(result);
   } catch (e) {

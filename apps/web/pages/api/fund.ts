@@ -20,19 +20,19 @@ import {
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
+import { chainRpcUrl, getChain } from "@soda-sdk/core";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 
-const SEPOLIA_CHAIN_ID = 11_155_111n;
+// Same DEMO_CHAIN the CLI uses, so the sponsor funds on the chain the demo
+// will actually broadcast to. Each chain has its own sponsor balance.
+const CHAIN = getChain(process.env.DEMO_CHAIN);
+const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 const FUNDING_THRESHOLD_WEI = 200_000_000_000_000n; // 0.0002 ETH
 const MAX_TOPUP_WEI = 2_000_000_000_000_000n; // 0.002 ETH
 
 function sepoliaRpc(): string {
-  return (
-    process.env.SEPOLIA_RPC_URL ??
-    process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
-    "https://ethereum-sepolia-rpc.publicnode.com"
-  );
+  return chainRpcUrl(CHAIN);
 }
 
 function bytesToHex(b: Uint8Array): string {

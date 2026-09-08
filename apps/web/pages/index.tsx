@@ -16,14 +16,13 @@ import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
   AAVE_DEPOSIT_GAS_LIMIT,
   AAVE_DEPOSIT_MIN_BALANCE_WEI,
-  AAVE_V3_SEPOLIA,
   addressToBytes,
   depositEthCalldata,
+  getChain,
   bigintToBe,
   computeTweak,
   deriveForeignPk,
   encodeUnsignedLegacy,
-  ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
@@ -58,13 +57,17 @@ const INITIAL_TIMELINE: TimelineState = {
   broadcastEth: "idle",
 };
 
-// Public Sepolia RPC defaults — used when NEXT_PUBLIC_SEPOLIA_RPC_URL isn't
-// set (e.g. on Vercel before env vars are configured). PublicNode is free,
-// no API key, decent rate limits. `rpc.sepolia.org` (the previous default)
-// is unreliable and frequently rate-limits browser requests.
-const SEPOLIA_RPC =
-  process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
-  "https://ethereum-sepolia.publicnode.com";
+// Destination chain, chosen at build time by NEXT_PUBLIC_DEMO_CHAIN
+// (sepolia | base-sepolia) to mirror the CLI's DEMO_CHAIN.
+const CHAIN = getChain(process.env.NEXT_PUBLIC_DEMO_CHAIN);
+
+// Both env vars are referenced statically because Next only inlines
+// NEXT_PUBLIC_* names it can see literally — a dynamic process.env[key]
+// lookup is always undefined in the browser bundle.
+const EVM_RPC =
+  (CHAIN.key === "base-sepolia"
+    ? process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL
+    : process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL) ?? CHAIN.defaultRpc;
 const SOLANA_RPC =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
 
@@ -75,7 +78,6 @@ function bytesToHex(b: Uint8Array): string {
 type RunResult = {
   ethAddress: string;
   recipient: string;
-  isSelfTransfer: boolean;
   signedHex: string;
   ethTxHash: string;
   signEthTransferTx: string;
@@ -85,10 +87,6 @@ type RunResult = {
 
 export default function Home() {
   const [groupPkHex, setGroupPkHex] = useState<string | null>(null);
-  // What the signed transaction does. "transfer" is the original self-send;
-  // "aave" deposits into Aave V3 so the derived address holds a lending
-  // position. Same pipeline either way — only `to`, `data` and gas differ.
-  const [action, setAction] = useState<"transfer" | "aave">("aave");
   const [ethAddress, setEthAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [timeline, setTimeline] = useState<TimelineState>(INITIAL_TIMELINE);
@@ -96,12 +94,11 @@ export default function Home() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recipientInput, setRecipientInput] = useState("");
 
   const { publicKey: walletPubkey, connected } = useWallet();
   const anchorWallet = useAnchorWallet();
   const { connection } = useConnection();
-  const sepolia = useMemo(() => new EthRpc(SEPOLIA_RPC), []);
+  const sepolia = useMemo(() => new EthRpc(EVM_RPC), []);
 
   useEffect(() => {
     fetch("/api/group-pk")
@@ -128,7 +125,7 @@ export default function Home() {
     const tweak = computeTweak(
       walletPubkey.toBytes(),
       new Uint8Array(0),
-      ETH_SEPOLIA_CHAIN_TAG,
+      CHAIN.chainTag,
     );
     const foreignPk = deriveForeignPk(groupPk, tweak);
     setEthAddress(bytesToHex(ethAddressFromPk(foreignPk)));
@@ -182,10 +179,8 @@ export default function Home() {
     // Gas is paid by the tx's `from`, so this address needs ETH of its own.
     // /api/fund is idempotent and returns immediately if already funded, and
     // this runs inside `busy` because confirmation can take a minute or two.
-    // A contract call needs more than a 21k transfer; ask the sponsor for the
-    // action-appropriate amount rather than the flat transfer threshold.
-    const requiredWei =
-      action === "aave" ? AAVE_DEPOSIT_MIN_BALANCE_WEI : 200_000_000_000_000n;
+    // The Aave call needs ~300k gas of headroom, well past a 21k transfer.
+    const requiredWei = AAVE_DEPOSIT_MIN_BALANCE_WEI;
     if (balance === null || balance < requiredWei) {
       try {
         const fundRes = await fetch("/api/fund", {
@@ -229,19 +224,14 @@ export default function Home() {
       const tweak = computeTweak(
         walletPubkey.toBytes(),
         derivationSeeds,
-        ETH_SEPOLIA_CHAIN_TAG,
+        CHAIN.chainTag,
       );
       const foreignPk = deriveForeignPk(groupPk, tweak);
       const ethAddrBytes = ethAddressFromPk(foreignPk);
 
-      // -------- 2. Build the unsigned Sepolia tx --------
-      const recipientHex = (recipientInput.trim() || ethAddress).replace(
-        /^0x/,
-        "",
-      );
-      const recipient = Buffer.from(recipientHex, "hex");
-      if (recipient.length !== 20) {
-        throw new Error("recipient must be 20 bytes");
+      // -------- 2. Build the unsigned tx --------
+      if (!CHAIN.aave) {
+        throw new Error(`${CHAIN.name} has no Aave V3 deployment configured`);
       }
 
       const nonce = await sepolia.getNonce(ethAddress);
@@ -258,19 +248,12 @@ export default function Home() {
       const valueWei = 100_000_000_000_000n; // 0.0001 ETH
       const valueWeiBe = bigintToBe(valueWei, 16);
 
-      // Where the tx goes and what it carries, by action. For Aave, `to` is
-      // the gateway and `onBehalfOf` inside the calldata is the DERIVED
+      // `to` is the gateway; `onBehalfOf` inside the calldata is the DERIVED
       // address, so the resulting aWETH is held by the Solana-controlled
       // account — not by the sponsor, not by the user's Phantom wallet.
-      const txTo: Uint8Array =
-        action === "aave"
-          ? addressToBytes(AAVE_V3_SEPOLIA.WETH_GATEWAY)
-          : new Uint8Array(recipient);
-      const txData: Uint8Array =
-        action === "aave"
-          ? depositEthCalldata(ethAddrBytes)
-          : new Uint8Array(0);
-      const gasLimit = action === "aave" ? AAVE_DEPOSIT_GAS_LIMIT : 21_000n;
+      const txTo = addressToBytes(CHAIN.aave.WETH_GATEWAY);
+      const txData = depositEthCalldata(CHAIN.aave, ethAddrBytes);
+      const gasLimit = AAVE_DEPOSIT_GAS_LIMIT;
 
       const unsignedRlp = encodeUnsignedLegacy({
         nonce,
@@ -279,7 +262,7 @@ export default function Home() {
         to: txTo,
         valueWeiBe,
         data: txData,
-        chainId: 11_155_111n,
+        chainId: CHAIN.chainId,
       });
       const payload = keccak_256(unsignedRlp);
 
@@ -313,6 +296,8 @@ export default function Home() {
           new BN(gasPrice.toString()),
           new BN(gasLimit.toString()),
           Buffer.from(txData),
+          new BN(CHAIN.chainId.toString()),
+          Array.from(CHAIN.chainTag),
           Buffer.from(derivationSeeds),
         )
         .accounts({
@@ -354,7 +339,6 @@ export default function Home() {
         finalizeSignatureTx: string;
         recoveryId: number;
         ethAddress: string;
-        isSelfTransfer: boolean;
       };
 
       updateStep("signOffChain", "done");
@@ -363,8 +347,7 @@ export default function Home() {
 
       setResult({
         ethAddress: finalize.ethAddress,
-        recipient: "0x" + recipientHex,
-        isSelfTransfer: finalize.isSelfTransfer,
+        recipient: bytesToHex(txTo),
         signedHex: finalize.signedHex,
         ethTxHash: finalize.ethTxHash,
         signEthTransferTx: signTxSig,
@@ -500,78 +483,28 @@ export default function Home() {
               loading={!groupPkHex}
             />
 
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 space-y-3">
-              <label className="block text-xs uppercase tracking-wider text-zinc-500">
-                Recipient (optional — defaults to self-transfer)
-              </label>
-              <input
-                type="text"
-                value={recipientInput}
-                onChange={(e) => setRecipientInput(e.target.value)}
-                placeholder={ethAddress ?? "0x…"}
-                disabled={busy}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-200 placeholder-zinc-600 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
-              />
-            </div>
-
-            {/* Action selector. Same pipeline either way — only the tx's
-                `to`, `data` and gas differ — which is the point: the signing
-                primitive doesn't care what the transaction does. */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
               <div className="text-xs uppercase tracking-wider text-zinc-500">
                 Action
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setAction("aave")}
-                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                    action === "aave"
-                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
-                      : "border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500"
-                  }`}
-                >
-                  Deposit into Aave V3
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => setAction("transfer")}
-                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                    action === "transfer"
-                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-200"
-                      : "border-zinc-700 bg-zinc-950 text-zinc-400 hover:border-zinc-500"
-                  }`}
-                >
-                  Self-transfer
-                </button>
+              <div className="mt-2 font-mono text-sm text-emerald-200">
+                Aave V3 · depositETH
               </div>
               <p className="mt-3 text-xs text-zinc-500">
-                {action === "aave" ? (
-                  <>
-                    Calls{" "}
-                    <code className="font-mono">
-                      WrappedTokenGatewayV3.depositETH
-                    </code>{" "}
-                    on Sepolia with 0.0001 ETH. The derived address receives
-                    aWETH — a lending position held by a Solana account. The
-                    recipient field above is ignored.
-                  </>
-                ) : (
-                  <>Sends 0.0001 ETH to the recipient (defaults to itself).</>
-                )}
+                Calls{" "}
+                <code className="font-mono">
+                  WrappedTokenGatewayV3.depositETH
+                </code>{" "}
+                on {CHAIN.name} with 0.0001 ETH. The derived address receives
+                aWETH — a lending position held by a Solana account, earning
+                interest from the next block onward.
               </p>
             </div>
 
             <SignAndSendButton
               disabled={buttonDisabled}
               busy={busy}
-              label={
-                action === "aave"
-                  ? "Sign & deposit 0.0001 ETH into Aave V3"
-                  : "Sign & broadcast 0.0001 ETH (self-transfer)"
-              }
+              label={`Sign & deposit 0.0001 ETH into Aave V3 on ${CHAIN.name}`}
               onClick={onSign}
             />
           </>
@@ -607,11 +540,11 @@ export default function Home() {
               {/* Ethereum side */}
               <div className="space-y-2">
                 <div className="text-xs uppercase tracking-wider text-emerald-300/70">
-                  Sepolia · Etherscan
+                  {CHAIN.name} · explorer
                 </div>
                 <div className="rounded-lg bg-white p-3">
                   <QRCodeSVG
-                    value={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
+                    value={CHAIN.explorerTx(result.ethTxHash)}
                     size={160}
                     bgColor="#ffffff"
                     fgColor="#000000"
@@ -620,7 +553,7 @@ export default function Home() {
                   />
                 </div>
                 <a
-                  href={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
+                  href={CHAIN.explorerTx(result.ethTxHash)}
                   target="_blank"
                   rel="noreferrer"
                   className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
@@ -662,11 +595,21 @@ export default function Home() {
               </span>
               <span className="text-emerald-300/50">to</span>
               <span className="break-all">
-                {result.recipient}
-                {result.isSelfTransfer ? "  (self-transfer)" : ""}
+                {result.recipient} (Aave WrappedTokenGatewayV3)
               </span>
               <span className="text-emerald-300/50">value</span>
-              <span>0.0001 ETH</span>
+              <span>0.0001 ETH deposited &rarr; aWETH</span>
+              <span className="text-emerald-300/50">position</span>
+              <span className="break-all">
+                <a
+                  href={CHAIN.explorerToken(CHAIN.aave!.A_WETH, result.ethAddress)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-emerald-100"
+                >
+                  aWETH balance of {result.ethAddress.slice(0, 10)}&hellip;
+                </a>
+              </span>
               <span className="text-emerald-300/50">soda program</span>
               <span className="break-all">{programs.soda}</span>
               <span className="text-emerald-300/50">sign_eth_transfer</span>

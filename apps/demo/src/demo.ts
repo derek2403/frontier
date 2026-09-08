@@ -51,15 +51,13 @@ const ETH_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json
 const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
 
 const CHAIN_ID = CHAIN.chainId;
-// DEMO_ACTION=aave switches the transaction from a self-transfer to an Aave V3
-// depositETH call. The derived address then holds aWETH — a lending position
-// owned by a Solana account — instead of just having moved ETH to itself.
-const AAVE = process.env.DEMO_ACTION?.trim().toLowerCase() === "aave";
-// A contract call needs far more gas headroom than a 21k transfer, so the
-// funding target follows the action. The sponsor tops up to this level.
-const FUNDING_THRESHOLD_WEI = AAVE
-  ? AAVE_DEPOSIT_MIN_BALANCE_WEI // 0.0015 ETH: deposit + ~300k gas
-  : 200_000_000_000_000n; // 0.0002 ETH; covers value + gas
+// The demo signs one thing: an Aave V3 depositETH call. The derived address
+// ends up holding aWETH — a lending position owned by a Solana account.
+// (The old self-transfer mode is gone; it proved the pipeline but said
+// nothing about what the primitive is for.)
+//
+// Deposit + ~300k gas of headroom; the sponsor tops the address up to this.
+const FUNDING_THRESHOLD_WEI = AAVE_DEPOSIT_MIN_BALANCE_WEI; // 0.0015 ETH
 const VALUE_WEI = 100_000_000_000_000n; // 0.0001 ETH per demo run
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -78,15 +76,6 @@ function loadSolanaWallet(): Keypair {
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8"))));
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  if (clean.length % 2 !== 0) throw new Error(`bad hex: ${hex}`);
-  const out = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
 
 function bytesToHex(b: Uint8Array): string {
   return "0x" + Buffer.from(b).toString("hex");
@@ -322,11 +311,6 @@ async function main() {
   }
 
   // --- 4. Build the unsigned tx ---
-  // Default: self-transfer (recipient = derived ETH address) so each demo only
-  // costs gas, value bounces back. Override with DEMO_RECIPIENT to send elsewhere.
-  const recipientHex = process.env.DEMO_RECIPIENT?.trim() || ethAddress;
-  const recipient = hexToBytes(recipientHex);
-  if (recipient.length !== 20) throw new Error(`recipient must be 20 bytes: ${recipientHex}`);
 
   // SODA_OVERRIDE_NONCE lets you replace a stuck-pending tx by re-using its
   // nonce with a higher gas price (Sepolia's "replacement transaction" rule).
@@ -345,28 +329,21 @@ async function main() {
   const gasPrice = bumpedGasPrice > MIN_GAS_PRICE ? bumpedGasPrice : MIN_GAS_PRICE;
   const valueWeiBe = bigintToBe(VALUE_WEI, 16);
 
-  // Where the tx goes and what it carries, by action. For Aave, `to` is the
-  // gateway and `onBehalfOf` in the calldata is the DERIVED address, so the
-  // aWETH lands at the Solana-controlled account rather than anywhere else.
-  if (AAVE && !CHAIN.aave) {
-    throw new Error(`DEMO_ACTION=aave but ${CHAIN.name} has no Aave V3 deployment configured`);
+  if (!CHAIN.aave) {
+    throw new Error(`${CHAIN.name} has no Aave V3 deployment configured`);
   }
-  const txTo: Uint8Array = AAVE
-    ? addressToBytes(CHAIN.aave!.WETH_GATEWAY)
-    : recipient;
-  const txData: Uint8Array = AAVE
-    ? depositEthCalldata(CHAIN.aave!, ethAddressFromPk(foreignPk))
-    : new Uint8Array(0);
-  const gasLimit = AAVE ? AAVE_DEPOSIT_GAS_LIMIT : 21_000n;
+  // `to` is the gateway; `onBehalfOf` inside the calldata is the DERIVED
+  // address, so the aWETH lands at the Solana-controlled account.
+  const txTo = addressToBytes(CHAIN.aave.WETH_GATEWAY);
+  const txData = depositEthCalldata(CHAIN.aave, ethAddressFromPk(foreignPk));
+  const gasLimit = AAVE_DEPOSIT_GAS_LIMIT;
   const txToHex = bytesToHex(txTo);
 
   console.log("Tx:");
   console.log(`  chain:     ${CHAIN.name} (chainId ${CHAIN_ID})`);
-  if (AAVE) {
-    console.log(`  action:    Aave V3 depositETH → aWETH to ${ethAddress}`);
-  }
-  console.log(`  to:        ${txToHex}${AAVE ? "  (WrappedTokenGatewayV3)" : ""}`);
-  if (AAVE) console.log(`  data:      ${bytesToHex(txData).slice(0, 10)}… (${txData.length} bytes)`);
+  console.log(`  action:    Aave V3 depositETH → aWETH to ${ethAddress}`);
+  console.log(`  to:        ${txToHex}  (WrappedTokenGatewayV3)`);
+  console.log(`  data:      ${bytesToHex(txData).slice(0, 10)}… (${txData.length} bytes)`);
   console.log(`  value:     ${VALUE_WEI} wei (0.0001 ETH)`);
   console.log(`  nonce:     ${nonce}`);
   console.log(`  gasPrice:  ${gasPrice} wei`);
@@ -546,7 +523,6 @@ async function main() {
     /* non-fatal */
   }
 
-  const isSelfTransfer = recipientHex.toLowerCase() === ethAddress.toLowerCase();
 
   banner("DONE — open these in a browser:");
   console.log(`  ETH side (${CHAIN.name}):  ${CHAIN.explorerTx(ethTxHash)}`);
@@ -555,9 +531,10 @@ async function main() {
     console.log(`                          ${solscanTx(finalSig)}`);
   }
   console.log("");
-  console.log(`  from:  ${ethAddress}  (controlled by Solana, no private key)`);
-  console.log(`  to:    ${recipientHex}${isSelfTransfer ? "  (self-transfer)" : ""}`);
-  console.log(`  value: 0.0001 ETH`);
+  console.log(`  from:   ${ethAddress}  (derived from your Solana wallet)`);
+  console.log(`  to:     ${txToHex}  (Aave WrappedTokenGatewayV3)`);
+  console.log(`  value:  0.0001 ETH deposited → aWETH`);
+  console.log(`  aWETH:  ${CHAIN.explorerToken(CHAIN.aave!.A_WETH, ethAddress)}`);
   console.log(`  hash:  ${ethTxHash}\n`);
 }
 
