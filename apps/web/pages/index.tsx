@@ -327,209 +327,236 @@ export default function Home() {
   const buttonDisabled = !connected || !isFunded || balance === null || !ethAddress;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="text-xl font-semibold">SODA</div>
-            <div className="hidden text-sm text-zinc-500 sm:block">
+    <div className="min-h-screen bg-surface text-primary">
+      <header className="border-b border-subtle">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-6 px-6 py-5">
+          <div className="flex items-baseline gap-3">
+            <span className="text-base font-semibold tracking-tight">SODA</span>
+            <span className="hidden text-sm text-secondary sm:inline">
               Solana-Owned Derived Authority
-            </div>
+            </span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-5">
             <a
-              href="https://frontier-docs-cazz.vercel.app/"
+              href={DOCS_URL}
               target="_blank"
               rel="noreferrer"
-              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+              className="text-sm text-secondary underline-offset-4 transition hover:text-primary hover:underline"
             >
-              Docs ↗
+              Docs
             </a>
             <WalletMultiButton />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">
-            A Solana program just signed an Ethereum transaction.
-          </h1>
-          <p className="mt-3 text-zinc-400">
-            The address below is owned by an{" "}
-            <code className="font-mono">eth_demo</code> program PDA on Solana
-            — no private key. Two MPC nodes produce the signature
-            jointly; Solana&apos;s <code className="font-mono">secp256k1_recover</code>{" "}
-            syscall verifies it on-chain, then it&apos;s broadcast to Sepolia.
-          </p>
-          {connected && walletPubkey ? (
-            <p className="mt-3 text-xs font-mono text-emerald-300/80">
-              connected: {walletPubkey.toBase58().slice(0, 8)}…{walletPubkey.toBase58().slice(-6)}
-            </p>
-          ) : (
-            <p className="mt-3 text-xs text-amber-300/80">
-              Connect Phantom (top-right) on devnet to enable the Sign &amp; Send button.
-            </p>
-          )}
-        </div>
+      <main className="mx-auto max-w-5xl px-6 py-16 sm:py-24">
+        {/* The claim and the evidence for it share the first screen. */}
+        <h1 className="max-w-2xl text-3xl leading-[1.15] font-semibold tracking-tight sm:text-4xl">
+          Your Solana wallet controls an Ethereum address that has no private
+          key.
+        </h1>
+        <p className="mt-5 max-w-xl text-base leading-relaxed text-secondary">
+          The SODA program derives the address on-chain from the account that
+          signs. Two MPC nodes hold separate shares and produce the signature
+          jointly, then Solana&apos;s{" "}
+          <code className="font-mono text-[0.9em] text-primary">
+            secp256k1_recover
+          </code>{" "}
+          syscall verifies it before the transaction reaches Sepolia.
+        </p>
 
         {connected ? (
           <>
-            <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
-              <div>SODA program:     {programs.soda}</div>
-              <div>eth_demo program: {programs.ethDemo}</div>
-              <div>Solana cluster:   devnet (Helius)</div>
-            </div>
-
-            {/* Live MPC committee status */}
-            <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                </span>
-                Live MPC committee · 2-of-2 Lindell &apos;17 ECDSA
-              </div>
-              <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-                <div>node P1 · share x1</div>
-                <div>node P2 · share x2</div>
-                <div>coordinator · {MPC_COORDINATOR}</div>
-                <div className="pt-1 text-xs text-emerald-300/60">
-                  Neither node holds the joint secret. Signing runs the 4-message
-                  Lindell &apos;17 protocol; the on-chain{" "}
-                  <code>secp256k1_recover</code> syscall verifies the result.
-                  Both nodes are co-located on one Render instance for this
-                  demo; splitting them across hosts is a config change.
-                </div>
-              </div>
-            </div>
-
-            <DerivedAddressCard
-              ethAddress={ethAddress}
-              sepoliaBalanceWei={balance}
-              loading={!groupPkHex}
-            />
-
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 space-y-3">
-              <label className="block text-xs uppercase tracking-wider text-zinc-500">
-                Recipient (optional — defaults to self-transfer)
-              </label>
-              <input
-                type="text"
-                value={recipientInput}
-                onChange={(e) => setRecipientInput(e.target.value)}
-                placeholder={ethAddress ?? "0x…"}
-                disabled={busy}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-200 placeholder-zinc-600 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+            <div className="mt-14">
+              <DerivedAddressCard
+                ethAddress={ethAddress}
+                sepoliaBalanceWei={balance}
+                loading={!groupPkHex}
+                derivedFrom={walletPubkey?.toBase58() ?? null}
               />
             </div>
 
-            <SignAndSendButton
-              disabled={buttonDisabled}
-              busy={busy}
-              onClick={onSign}
-            />
+            {/* The action sits with the evidence, not a screen below it. */}
+            <div className="mt-12 border-t border-subtle pt-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1">
+                  <label
+                    htmlFor="recipient"
+                    className="block text-sm text-secondary"
+                  >
+                    Recipient
+                  </label>
+                  <input
+                    id="recipient"
+                    type="text"
+                    value={recipientInput}
+                    onChange={(e) => setRecipientInput(e.target.value)}
+                    placeholder={ethAddress ?? "0x…"}
+                    disabled={busy}
+                    className="mt-2 h-11 w-full rounded-md border border-default bg-surface px-3 font-mono text-sm text-primary placeholder:text-tertiary focus:border-strong focus:outline-none disabled:opacity-50"
+                  />
+                  <p className="mt-2 text-sm text-secondary">
+                    Leave empty to send back to itself, which spends gas only.
+                  </p>
+                </div>
+                <SignAndSendButton
+                  disabled={buttonDisabled}
+                  busy={busy}
+                  onClick={onSign}
+                />
+              </div>
+            </div>
           </>
         ) : (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-8 text-center">
-            <div className="text-lg font-medium text-zinc-200">
-              Connect Phantom to begin
-            </div>
-            <div className="mt-2 text-sm text-zinc-500">
-              Use the button in the top-right. Devnet only — Phantom will switch
-              automatically.
-            </div>
+          <div className="mt-14 border-t border-subtle pt-8">
+            <p className="text-base">Connect Phantom to run it yourself.</p>
+            <p className="mt-2 max-w-xl text-sm text-secondary">
+              Use the button above. Devnet only, and your wallet pays the Solana
+              fee. Reading this page needs no wallet.
+            </p>
           </div>
         )}
 
         {error ? (
-          <div className="rounded-lg bg-rose-950/40 border border-rose-900 px-4 py-3 text-sm text-rose-200">
-            {error}
+          <div
+            role="alert"
+            className="mt-10 border-l-2 border-error bg-error-surface py-3 pl-4 pr-4"
+          >
+            <p className="text-sm font-medium text-error">Run failed</p>
+            <p className="mt-1 font-mono text-sm break-all text-secondary">
+              {error}
+            </p>
           </div>
         ) : null}
 
-        <Timeline state={timeline} />
+        <div className="mt-16">
+          <Timeline state={timeline} />
+        </div>
 
         <SignedHexView signedRlpHex={signedHex} />
 
         {result ? (
-          <div className="rounded-2xl border border-emerald-800 bg-emerald-950/30 p-6 space-y-4">
-            <div className="text-xs uppercase tracking-wider text-emerald-400">
-              Done · verify on both chains
-            </div>
+          <section
+            aria-labelledby="result"
+            className="mt-16 border-t border-subtle pt-10"
+          >
+            <h2 id="result" className="text-xl font-semibold tracking-tight">
+              Signed on Solana, settled on Ethereum
+            </h2>
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-secondary">
+              The same signature appears in both records below. Scan or open
+              either to check it independently.
+            </p>
 
-            <div className="grid gap-6 sm:grid-cols-2">
-              {/* Ethereum side */}
-              <div className="space-y-2">
-                <div className="text-xs uppercase tracking-wider text-emerald-300/70">
-                  Sepolia · Etherscan
-                </div>
-                <div className="rounded-lg bg-white p-3">
+            <dl className="mt-8 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-[7rem_1fr]">
+              <dt className="text-secondary">From</dt>
+              <dd className="font-mono break-all">{result.ethAddress}</dd>
+              <dt className="text-secondary">To</dt>
+              <dd className="font-mono break-all">
+                {result.recipient}
+                {result.isSelfTransfer ? (
+                  <span className="ml-2 font-sans text-secondary">
+                    self-transfer
+                  </span>
+                ) : null}
+              </dd>
+              <dt className="text-secondary">Value</dt>
+              <dd className="tabular font-mono">0.0001 ETH</dd>
+              <dt className="text-secondary">sign_eth_transfer</dt>
+              <dd className="font-mono break-all">{result.signEthTransferTx}</dd>
+            </dl>
+
+            <div className="mt-10 grid gap-10 sm:grid-cols-2">
+              <div>
+                <h3 className="text-sm font-medium">Ethereum · Etherscan</h3>
+                <div className="mt-3 inline-block rounded-md bg-white p-3">
                   <QRCodeSVG
                     value={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
-                    size={160}
+                    size={140}
                     bgColor="#ffffff"
                     fgColor="#000000"
                     level="M"
-                    className="mx-auto block"
+                    className="block"
                   />
                 </div>
                 <a
                   href={`https://sepolia.etherscan.io/tx/${result.ethTxHash}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
+                  className="mt-3 block font-mono text-sm break-all underline underline-offset-2 hover:text-secondary"
                 >
                   {result.ethTxHash}
                 </a>
               </div>
 
-              {/* Solana side */}
-              <div className="space-y-2">
-                <div className="text-xs uppercase tracking-wider text-emerald-300/70">
-                  Solana · finalize_signature (Helius XRAY)
-                </div>
-                <div className="rounded-lg bg-white p-3">
+              <div>
+                <h3 className="text-sm font-medium">
+                  Solana · finalize_signature
+                </h3>
+                <div className="mt-3 inline-block rounded-md bg-white p-3">
                   <QRCodeSVG
                     value={`https://xray.helius.xyz/tx/${result.finalizeSignatureTx}?network=devnet`}
-                    size={160}
+                    size={140}
                     bgColor="#ffffff"
                     fgColor="#000000"
                     level="M"
-                    className="mx-auto block"
+                    className="block"
                   />
                 </div>
                 <a
                   href={`https://xray.helius.xyz/tx/${result.finalizeSignatureTx}?network=devnet`}
                   target="_blank"
                   rel="noreferrer"
-                  className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
+                  className="mt-3 block font-mono text-sm break-all underline underline-offset-2 hover:text-secondary"
                 >
                   {result.finalizeSignatureTx}
                 </a>
               </div>
             </div>
-
-            <div className="grid grid-cols-1 gap-1 border-t border-emerald-900/50 pt-3 text-xs font-mono text-emerald-300/70 sm:grid-cols-[auto_1fr] sm:gap-x-4">
-              <span className="text-emerald-300/50">from</span>
-              <span className="break-all">
-                {result.ethAddress} (controlled by Solana, no private key)
-              </span>
-              <span className="text-emerald-300/50">to</span>
-              <span className="break-all">
-                {result.recipient}
-                {result.isSelfTransfer ? "  (self-transfer)" : ""}
-              </span>
-              <span className="text-emerald-300/50">value</span>
-              <span>0.0001 ETH</span>
-              <span className="text-emerald-300/50">soda program</span>
-              <span className="break-all">{programs.soda}</span>
-              <span className="text-emerald-300/50">sign_eth_transfer</span>
-              <span className="break-all">{result.signEthTransferTx}</span>
-            </div>
-          </div>
+          </section>
         ) : null}
+
+        {/* Audit path. Deliberately quiet and last: it supports the claim
+            above rather than competing with it for the first read. */}
+        <section
+          aria-labelledby="committee"
+          className="mt-20 border-t border-subtle pt-10"
+        >
+          <h2 id="committee" className="text-sm font-medium">
+            Committee and deployment
+          </h2>
+          <dl className="mt-6 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-[10rem_1fr]">
+            <dt className="text-secondary">Protocol</dt>
+            <dd>2-of-2 Lindell &apos;17 threshold ECDSA</dd>
+            <dt className="text-secondary">Node P1</dt>
+            <dd className="font-mono">share x1</dd>
+            <dt className="text-secondary">Node P2</dt>
+            <dd className="font-mono">share x2</dd>
+            <dt className="text-secondary">Coordinator</dt>
+            <dd className="font-mono break-all">{MPC_COORDINATOR}</dd>
+            <dt className="text-secondary">SODA program</dt>
+            <dd className="font-mono break-all">{programs.soda}</dd>
+            <dt className="text-secondary">eth_demo program</dt>
+            <dd className="font-mono break-all">{programs.ethDemo}</dd>
+            <dt className="text-secondary">Cluster</dt>
+            <dd>Solana devnet</dd>
+          </dl>
+          <p className="mt-6 max-w-2xl text-sm leading-relaxed text-secondary">
+            Neither node ever sees the joint secret. Both currently run on one
+            Render instance for this demo, so the two shares share a host;
+            separating them across hosts is a configuration change, not a
+            protocol change.
+          </p>
+        </section>
       </main>
+
+      <footer className="border-t border-subtle">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-6 py-6 text-sm text-secondary">
+          <span>SODA · Solana-Owned Derived Authority</span>
+          <span>Devnet demo. Not audited.</span>
+        </div>
+      </footer>
     </div>
   );
 }
