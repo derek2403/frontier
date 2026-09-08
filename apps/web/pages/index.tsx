@@ -297,40 +297,6 @@ export default function Home() {
     setTimeline(INITIAL_TIMELINE);
     setBusy(true);
 
-    // Top up the derived address from the sponsor key before anything else.
-    // Gas is paid by the tx's `from`, so this address needs ETH of its own.
-    // /api/fund is idempotent and returns immediately if already funded, and
-    // this runs inside `busy` because confirmation can take a minute or two.
-    // The Aave call needs ~300k gas of headroom, well past a 21k transfer.
-    const requiredWei = AAVE_DEPOSIT_MIN_BALANCE_WEI;
-    if (balance === null || balance < requiredWei) {
-      try {
-        const fundRes = await fetch("/api/fund", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chain: CHAIN.key,
-            address: ethAddress,
-            minWei: requiredWei.toString(),
-          }),
-        });
-        const fundJson = (await fundRes.json()) as {
-          funded?: boolean;
-          balanceWei?: string;
-          error?: string;
-        };
-        if (!fundRes.ok || !fundJson.funded) {
-          setError(fundJson.error ?? "could not fund the derived address");
-          setBusy(false);
-          return;
-        }
-        if (fundJson.balanceWei) setBalance(BigInt(fundJson.balanceWei));
-      } catch (e) {
-        setError(`funding failed: ${(e as Error).message}`);
-        setBusy(false);
-        return;
-      }
-    }
     const updateStep = (name: keyof TimelineState, status: Step) =>
       setTimeline((prev) => ({ ...prev, [name]: status }));
 
@@ -389,9 +355,7 @@ export default function Home() {
       });
       const payload = keccak_256(unsignedRlp);
 
-      // -------- 3. Phantom signs eth_demo::sign_eth_transfer --------
-      updateStep("signEthTransfer", "active");
-
+      // -------- 3. Encode the Solana instruction --------
       const sodaProgramId = new PublicKey(SODA_PROGRAM_ID);
       const ethDemoProgramId = new PublicKey(ETH_DEMO_PROGRAM_ID);
       const [committeePda] = PublicKey.findProgramAddressSync(
@@ -411,7 +375,7 @@ export default function Home() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ethDemoProgram = new Program(ethDemoIdl as any, provider);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const signTxSig: string = await (ethDemoProgram.methods as any)
+      const signBuilder = (ethDemoProgram.methods as any)
         .signEthTransfer(
           Array.from(txTo),
           Array.from(valueWeiBe),
@@ -429,13 +393,50 @@ export default function Home() {
           sigRequest: sigRequestPda,
           sodaProgram: sodaProgramId,
           systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+        });
+      // Encode now, before anything is spent. A committed web IDL that has
+      // drifted from the program fails here with "provided too many
+      // arguments"; this used to run after the sponsor top-up, so every click
+      // on a stale build cost up to 0.002 ETH and still went nowhere.
+      await signBuilder.instruction();
+
+      // -------- 4. Fund the derived address --------
+      // Gas is paid by the tx's `from`, so this address needs ETH of its own.
+      // /api/fund is idempotent and returns immediately if already funded; it
+      // runs inside `busy` because confirmation can take a minute or two. The
+      // Aave call needs ~300k gas of headroom, well past a 21k transfer.
+      const requiredWei = AAVE_DEPOSIT_MIN_BALANCE_WEI;
+      if (balance === null || balance < requiredWei) {
+        const fundRes = await fetch("/api/fund", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chain: CHAIN.key,
+            address: ethAddress,
+            minWei: requiredWei.toString(),
+          }),
+        });
+        const fundJson = (await fundRes.json()) as {
+          funded?: boolean;
+          balanceWei?: string;
+          error?: string;
+        };
+        if (!fundRes.ok || !fundJson.funded) {
+          throw new Error(
+            fundJson.error ?? "could not fund the derived address",
+          );
+        }
+        if (fundJson.balanceWei) setBalance(BigInt(fundJson.balanceWei));
+      }
+
+      // -------- 5. Phantom signs eth_demo::sign_eth_transfer --------
+      updateStep("signEthTransfer", "active");
+      const signTxSig: string = await signBuilder.rpc();
 
       updateStep("signEthTransfer", "done");
       updateStep("sigRequested", "done");
 
-      // -------- 4. Backend: MPC sign + finalize + broadcast --------
+      // -------- 6. Backend: MPC sign + finalize + broadcast --------
       updateStep("signOffChain", "active");
       const finalizeRes = await fetch("/api/finalize", {
         method: "POST",

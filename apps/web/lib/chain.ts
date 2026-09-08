@@ -11,8 +11,10 @@
 import { getChain, type EvmChain, type EvmChainKey } from "@soda-sdk/core";
 
 export function serverChain(): EvmChain {
+  // `||`, not `??`: a dashboard variable saved with an empty value is "" and
+  // must fall through to the public one, exactly like an unset variable.
   return getChain(
-    process.env.DEMO_CHAIN ?? process.env.NEXT_PUBLIC_DEMO_CHAIN,
+    process.env.DEMO_CHAIN?.trim() || process.env.NEXT_PUBLIC_DEMO_CHAIN,
   );
 }
 

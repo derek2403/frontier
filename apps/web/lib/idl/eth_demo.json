@@ -86,6 +86,19 @@
           "type": "bytes"
         },
         {
+          "name": "chain_id",
+          "type": "u64"
+        },
+        {
+          "name": "chain_tag",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
           "name": "derivation_seeds",
           "type": "bytes"
         }
