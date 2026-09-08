@@ -179,10 +179,14 @@ export async function runDemo(
     }
   }
 
-  // 2. Derive ETH address
+  // 2. Derive ETH address. The tweak is keyed on the OWNER (the signer),
+  // matching what soda::request_signature now derives on-chain; the seeds are
+  // the path, so one owner can hold several foreign addresses. We compute it
+  // here only to show the address and pre-check the balance — the program
+  // derives it independently and is the authority on what gets signed.
   const derivationSeeds = new Uint8Array(0);
   const tweak = computeTweak(
-    ethDemoProgram.programId.toBytes(),
+    walletKp.publicKey.toBytes(),
     derivationSeeds,
     ETH_SEPOLIA_CHAIN_TAG,
   );
@@ -240,7 +244,6 @@ export async function runDemo(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const signEthTransferTx = await (ethDemoProgram.methods as any)
     .signEthTransfer(
-      Array.from(foreignPkXy),
       Array.from(recipient),
       Array.from(valueWeiBe),
       new BN(nonce.toString()),
