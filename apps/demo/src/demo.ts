@@ -175,14 +175,16 @@ async function main() {
   }
 
   // --- 2. Derive ETH address ---
-  // Seeds bind the derived address to the OWNER. With empty seeds every
-  // caller hashed the same constants (program id + chain tag) and therefore
-  // landed on one shared address. Feeding the Solana wallet pubkey in makes
-  // the address per-owner, and still deterministic: the same wallet always
-  // derives the same address.
-  const derivationSeeds = walletKp.publicKey.toBytes();
+  // The tweak is keyed on the OWNER (the signer), matching what the program
+  // now computes on-chain. `derivationSeeds` is the path: it lets one owner
+  // hold several foreign addresses. Empty = the owner's default account.
+  //
+  // This mirrors NEAR: tweak = H(domain, predecessor_account, path). The
+  // owner slot used to hold the eth_demo program id and the path slot was
+  // empty, which is why every caller landed on the same address.
+  const derivationSeeds = new Uint8Array(0);
   const tweak = computeTweak(
-    ethDemoProgram.programId.toBytes(),
+    walletKp.publicKey.toBytes(),
     derivationSeeds,
     ETH_SEPOLIA_CHAIN_TAG,
   );
@@ -274,7 +276,6 @@ async function main() {
   console.log("\n[1/3] eth_demo::sign_eth_transfer  (Solana program builds RLP, CPIs SODA)");
   const signTxSig = await (ethDemoProgram.methods as any)
     .signEthTransfer(
-      Array.from(foreignPkXy),
       Array.from(recipient),
       Array.from(valueWeiBe),
       new BN(nonce.toString()),
@@ -306,10 +307,8 @@ async function main() {
         "content-type": "application/json",
         ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
       },
-      body: JSON.stringify({
-        payloadHex: Buffer.from(payload).toString("hex"),
-        tweakHex: Buffer.from(tweak).toString("hex"),
-      }),
+      // The committee reads the request from chain itself; we only name it.
+      body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
     });
     if (!res.ok) {
       throw new Error(`mpc coordinator ${res.status}: ${await res.text()}`);

@@ -292,8 +292,11 @@ async function main() {
   // assuming they were empty. This is what makes the check an audit: we
   // re-derive from on-chain state instead of from a local assumption.
   const onChainSeeds = Uint8Array.from(sr.derivationSeeds);
+  // Owner slot is the requester recorded on-chain; the program derives from
+  // exactly these bytes, so re-deriving them here is a real audit rather than
+  // a restatement of what the client happened to send.
   const tweak = computeTweak(
-    ethDemoProgram.programId.toBytes(),
+    sr.requester.toBytes(),
     onChainSeeds,
     ETH_SEPOLIA_CHAIN_TAG,
   );

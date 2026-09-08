@@ -24,6 +24,11 @@ Cargo.lock
 keyshare*.json
 !keyshare.example.json
 
+# MPC key shares written by `pnpm mpc:dkg`. Two of these reconstruct the
+# committee's signing key, so they must never reach the repo.
+apps/mpc-node/shares/
+share-p*.json
+
 # IDE
 .vscode/
 .idea/

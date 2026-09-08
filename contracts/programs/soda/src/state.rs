@@ -26,6 +26,9 @@ pub struct SigRequest {
     pub derivation_seeds: Vec<u8>,
     pub payload: [u8; 32],
     pub chain_tag: [u8; 32],
+    /// Signature scheme: 0 = secp256k1 ECDSA. Present so an Ed25519 committee
+    /// can be added later without a breaking instruction change.
+    pub domain_id: u32,
     pub expires_at: i64,
     pub completed: bool,
     pub signature: [u8; 64],
@@ -34,8 +37,11 @@ pub struct SigRequest {
 
 impl SigRequest {
     pub const MAX_SEEDS_LEN: usize = 64;
+    // disc + bump + requester + committee + foreign_pk_xy + seeds(vec)
+    //      + payload + chain_tag + domain_id + expires_at + completed
+    //      + signature + recovery_id
     pub const SIZE: usize =
-        8 + 1 + 32 + 32 + 64 + (4 + Self::MAX_SEEDS_LEN) + 32 + 32 + 8 + 1 + 64 + 1;
+        8 + 1 + 32 + 32 + 64 + (4 + Self::MAX_SEEDS_LEN) + 32 + 32 + 4 + 8 + 1 + 64 + 1;
 }
 
 #[event]
@@ -46,6 +52,7 @@ pub struct SigRequested {
     pub payload: [u8; 32],
     pub chain_tag: [u8; 32],
     pub derivation_seeds: Vec<u8>,
+    pub domain_id: u32,
 }
 
 #[event]

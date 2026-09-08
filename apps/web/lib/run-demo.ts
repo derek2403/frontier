@@ -274,7 +274,7 @@ export async function runDemo(
     // Real Lindell '17 2-of-2 ECDSA via the AWS coordinator.
     onEvent({
       kind: "log",
-      message: `mpc: POST ${MPC_URL}/sign (payload + tweak)`,
+      message: `mpc: POST ${MPC_URL}/sign (sig_request account)`,
     });
     const res = await fetch(`${MPC_URL}/sign`, {
       method: "POST",
@@ -282,10 +282,8 @@ export async function runDemo(
         "content-type": "application/json",
         ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
       },
-      body: JSON.stringify({
-        payloadHex: Buffer.from(payload).toString("hex"),
-        tweakHex: Buffer.from(tweak).toString("hex"),
-      }),
+      // Name the on-chain request; the nodes derive payload + tweak from it.
+      body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
     });
     if (!res.ok) {
       throw new Error(`mpc coordinator ${res.status}: ${await res.text()}`);

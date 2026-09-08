@@ -24,9 +24,11 @@ pub const fn eth_sepolia_chain_tag() -> [u8; 32] {
 pub mod eth_demo {
     use super::*;
 
+    /// `foreign_pk_xy` is gone: soda now derives the foreign key itself from
+    /// the signer, so this program cannot name an address on a user's behalf
+    /// and a malicious client cannot name one at all.
     pub fn sign_eth_transfer(
         ctx: Context<SignEthTransfer>,
-        foreign_pk_xy: [u8; 64],
         to: [u8; 20],
         value_wei_be: [u8; 16],
         nonce: u64,
@@ -62,10 +64,10 @@ pub mod eth_demo {
         );
         soda::cpi::request_signature(
             cpi_ctx,
-            foreign_pk_xy,
             derivation_seeds,
             payload,
             eth_sepolia_chain_tag(),
+            0, // domain_id: secp256k1 ECDSA
         )?;
 
         // 4. Emit the unsigned RLP so the relayer can assemble + broadcast

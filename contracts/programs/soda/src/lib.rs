@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 #[cfg(test)]
 mod derivation;
+pub mod derive_onchain;
 pub mod errors;
 pub mod instructions;
 pub mod state;
@@ -18,19 +19,22 @@ pub mod soda {
         instructions::init_committee::handler(ctx, group_pk)
     }
 
+    /// Note there is no `foreign_pk_xy` parameter: the program derives the
+    /// foreign public key itself from the signer, so a caller cannot name an
+    /// address it does not control.
     pub fn request_signature(
         ctx: Context<RequestSignature>,
-        foreign_pk_xy: [u8; 64],
         derivation_seeds: Vec<u8>,
         payload: [u8; 32],
         chain_tag: [u8; 32],
+        domain_id: u32,
     ) -> Result<()> {
         instructions::request_signature::handler(
             ctx,
-            foreign_pk_xy,
             derivation_seeds,
             payload,
             chain_tag,
+            domain_id,
         )
     }
 
