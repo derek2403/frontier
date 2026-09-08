@@ -51,6 +51,8 @@ export type SigRequestAccount = {
   derivationSeeds: Uint8Array
   payload: Uint8Array
   chainTag: Uint8Array
+  /** Signature scheme; 0 = secp256k1 ECDSA, the only one this node can sign. */
+  domainId: number
   expiresAt: bigint
   completed: boolean
 }
@@ -90,17 +92,28 @@ export function decodeSigRequest(data: Buffer): SigRequestAccount {
   o += 4
   // MAX_SEEDS_LEN on-chain is 64; anything larger means we are misparsing.
   if (seedsLen > 64) throw new Error('derivation_seeds length out of range')
-  need(o, seedsLen + 32 + 32 + 8 + 1)
+  need(o, seedsLen + 32 + 32 + 4 + 8 + 1)
   const derivationSeeds = Uint8Array.from(data.subarray(o, o + seedsLen))
   o += seedsLen
   const payload = Uint8Array.from(data.subarray(o, o + 32))
   o += 32
   const chainTag = Uint8Array.from(data.subarray(o, o + 32))
   o += 32
+  const domainId = data.readUInt32LE(o)
+  o += 4
   const expiresAt = data.readBigInt64LE(o)
   o += 8
   const completed = data[o] === 1
-  return { requester, foreignPkXY, derivationSeeds, payload, chainTag, expiresAt, completed }
+  return {
+    requester,
+    foreignPkXY,
+    derivationSeeds,
+    payload,
+    chainTag,
+    domainId,
+    expiresAt,
+    completed,
+  }
 }
 
 export function computeTweak(
@@ -170,6 +183,11 @@ export async function authorize(
   }
 
   const sr = decodeSigRequest(acct.data)
+  // This node holds a secp256k1 share. Refuse anything routed to a different
+  // scheme rather than signing it with the wrong key material.
+  if (sr.domainId !== 0) {
+    throw new Error(`unsupported domain_id ${sr.domainId} (this node signs secp256k1 only)`)
+  }
   if (sr.completed) throw new Error('request already completed')
   if (sr.expiresAt !== 0n && sr.expiresAt < BigInt(Math.floor(Date.now() / 1000))) {
     throw new Error('request expired')

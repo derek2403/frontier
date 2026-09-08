@@ -13,15 +13,27 @@ export const ETH_SEPOLIA_CHAIN_TAG: Uint8Array = (() => {
   return tag;
 })();
 
+/**
+ * tweak = sha256(DERIVATION_DOMAIN || owner || path || chainTag)
+ *
+ * `owner` is the 32-byte Solana account that will SIGN the request — the same
+ * value soda::request_signature reads from `requester.key()` and derives from
+ * on-chain. It is not a program id: a wallet signing directly owns its own
+ * foreign address, and a program CPI-ing with invoke_signed owns one under its
+ * PDA. `path` lets one owner hold several addresses; empty is the default.
+ *
+ * Passing a constant here (as an earlier version did, using the eth_demo
+ * program id with an empty path) makes every caller derive the SAME address.
+ */
 export function computeTweak(
-  requesterProgram: Uint8Array,
-  seeds: Uint8Array,
+  owner: Uint8Array,
+  path: Uint8Array,
   chainTag: Uint8Array,
 ): Uint8Array {
   const h = sha256.create();
   h.update(DERIVATION_DOMAIN);
-  h.update(requesterProgram);
-  h.update(seeds);
+  h.update(owner);
+  h.update(path);
   h.update(chainTag);
   return h.digest();
 }
@@ -48,11 +60,11 @@ export function ethAddressFromPk(uncompressedPk: Uint8Array): Uint8Array {
 
 export function deriveEthAddress(
   groupPkCompressed: Uint8Array,
-  requesterProgram: Uint8Array,
-  seeds: Uint8Array,
+  owner: Uint8Array,
+  path: Uint8Array,
   chainTag: Uint8Array,
 ): { tweak: Uint8Array; foreignPk: Uint8Array; ethAddress: Uint8Array } {
-  const tweak = computeTweak(requesterProgram, seeds, chainTag);
+  const tweak = computeTweak(owner, path, chainTag);
   const foreignPk = deriveForeignPk(groupPkCompressed, tweak);
   const ethAddress = ethAddressFromPk(foreignPk);
   return { tweak, foreignPk, ethAddress };
