@@ -705,17 +705,16 @@ export default function Home() {
               Solana-Owned Derived Authority
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <a
-              href="https://frontier-docs-cazz.vercel.app/"
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-            >
-              Docs ↗
-            </a>
-            <WalletMultiButton />
-          </div>
+          {/* The wallet button lives in step 1 only. A second copy up here
+              made "connect" look like page chrome rather than the first act. */}
+          <a
+            href={DOCS_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+          >
+            Docs ↗
+          </a>
         </div>
       </header>
 
