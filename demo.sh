@@ -28,16 +28,23 @@ CLUSTER="${SOLANA_CLUSTER:-devnet}"
 case "$CLUSTER" in
     local)
         RPC_URL="http://127.0.0.1:8899"
+        WS_URL="ws://127.0.0.1:8900"
         EXPLORER_BASE=""
         ;;
     devnet)
         # Prefer the Helius URL from .env (faster + no public-RPC rate limits
         # on reads/writes). Public api.devnet.solana.com is the fallback.
         RPC_URL="${SOLANA_DEVNET_RPC_URL:-https://api.devnet.solana.com}"
+        # Subscriptions go to the public node even when RPC_URL is a provider:
+        # web3.js confirms via signatureSubscribe over WS, and Alchemy's Solana
+        # endpoint answers that with -32601 Method not found. HTTP stays on the
+        # provider; only the socket falls back.
+        WS_URL="${SOLANA_WS_URL:-wss://api.devnet.solana.com}"
         EXPLORER_BASE="https://solscan.io"
         ;;
     mainnet)
         RPC_URL="https://api.mainnet-beta.solana.com"
+        WS_URL="${SOLANA_WS_URL:-wss://api.mainnet-beta.solana.com}"
         EXPLORER_BASE="https://solscan.io"
         ;;
     *)
@@ -46,6 +53,7 @@ case "$CLUSTER" in
         ;;
 esac
 export SOLANA_RPC_URL="$RPC_URL"
+export SOLANA_WS_URL="$WS_URL"
 
 VALIDATOR_LOG="/tmp/soda-validator.log"
 

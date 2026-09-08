@@ -164,7 +164,14 @@ export default async function handler(
     }
     const data = Uint8Array.from(Buffer.from(dataClean, "hex"));
 
-    const connection = new Connection(solanaRpc(), "confirmed");
+    // Explicit wsEndpoint: see the note in apps/demo/src/demo.ts — some
+    // providers reject signatureSubscribe, stalling .rpc() confirmation.
+    const connection = new Connection(solanaRpc(), {
+      commitment: "confirmed",
+      ...(process.env.SOLANA_WS_URL
+        ? { wsEndpoint: process.env.SOLANA_WS_URL }
+        : {}),
+    });
 
     // Read the on-chain SigRequest to recover (payload, foreign_pk_xy,
     // derivation_seeds, chain_tag). We use these to compute the SODA tweak

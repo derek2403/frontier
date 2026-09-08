@@ -195,9 +195,18 @@ async function main() {
   // --- Setup ---
   const walletKp = loadSolanaWallet();
   const wallet = new Wallet(walletKp);
+  // wsEndpoint is explicit because web3.js otherwise derives wss:// from the
+  // HTTP URL, and some providers (Alchemy's Solana endpoint among them) reject
+  // signatureSubscribe with -32601 — the transaction lands but confirmation
+  // times out, which looks like a failed deploy.
   const connection = new Connection(
     process.env.SOLANA_RPC_URL ?? "http://127.0.0.1:8899",
-    "confirmed",
+    {
+      commitment: "confirmed",
+      ...(process.env.SOLANA_WS_URL
+        ? { wsEndpoint: process.env.SOLANA_WS_URL }
+        : {}),
+    },
   );
   const provider = new AnchorProvider(connection, wallet, { commitment: "confirmed" });
 
