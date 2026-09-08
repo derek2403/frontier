@@ -1,7 +1,4 @@
 [toolchain]
-# Anchor 0.32.1 otherwise resolves Solana 2.3.x, whose platform-tools v1.48
-# ships Rust 1.84 — too old to parse dependencies that use edition2024
-# (stabilized in Rust 1.85). Solana 3.1.10 ships platform-tools v1.52.
 solana_version = "3.1.10"
 
 [features]
@@ -9,8 +6,8 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-eth_demo = "9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM"
-soda = "99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4"
+eth_demo = "9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx"
+soda = "CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J"
 
 [registry]
 url = "https://api.apr.dev"

@@ -288,15 +288,20 @@ async function main() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const committee = await (sodaProgram.account as any).committee.fetch(committeePda);
   const groupPkCompressed = Uint8Array.from(committee.groupPk);
+  // Read the seeds the request was ACTUALLY created with, rather than
+  // assuming they were empty. This is what makes the check an audit: we
+  // re-derive from on-chain state instead of from a local assumption.
+  const onChainSeeds = Uint8Array.from(sr.derivationSeeds);
   const tweak = computeTweak(
     ethDemoProgram.programId.toBytes(),
-    new Uint8Array(0), // empty derivation seeds (the demo's choice)
+    onChainSeeds,
     ETH_SEPOLIA_CHAIN_TAG,
   );
   const expectedForeignPk = deriveForeignPk(groupPkCompressed, tweak);
   const expectedForeignPkXy = expectedForeignPk.subarray(1);
   console.log(`  group_pk:      ${bytesToHex(groupPkCompressed)}`);
-  console.log(`  tweak:         ${bytesToHex(tweak)}  ${C.dim}(sha256("SODA-v1" || eth_demo_id || "" || chain_tag))${C.reset}`);
+  console.log(`  seeds:         ${onChainSeeds.length ? bytesToHex(onChainSeeds) : "(empty)"}  ${C.dim}(read from the on-chain SigRequest)${C.reset}`);
+  console.log(`  tweak:         ${bytesToHex(tweak)}  ${C.dim}(sha256("SODA-v1" || eth_demo_id || seeds || chain_tag))${C.reset}`);
   console.log(`  foreign_pk:    ${bytesToHex(expectedForeignPkXy)}`);
   check("derived foreign_pk == on-chain SigRequest.foreign_pk_xy",
     Buffer.from(expectedForeignPkXy).equals(Buffer.from(Uint8Array.from(sr.foreignPkXy))),
