@@ -15,6 +15,8 @@ import SignedHexView from "@/components/SignedHexView";
 import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
   bigintToBe,
+  computeTweak,
+  deriveForeignPk,
   encodeUnsignedLegacy,
   ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
@@ -101,15 +103,25 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!groupPkHex) return;
-    // No tweak — see "v0.5 quirk" note in onSign for the full reason.
-    // Address is the joint group_pk's ETH address.
+    if (!groupPkHex || !walletPubkey) {
+      setEthAddress(null);
+      return;
+    }
+    // The address belongs to the CONNECTED WALLET, not to the committee.
+    // soda::request_signature derives the same value on-chain from the signer,
+    // so this is a local preview of what the program will compute — connect a
+    // different wallet and you get a different address.
     const groupPk = Uint8Array.from(
       Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
     );
-    const groupPkUncompressed = secp256k1Curves.Point.fromBytes(groupPk).toBytes(false);
-    setEthAddress(bytesToHex(ethAddressFromPk(groupPkUncompressed)));
-  }, [groupPkHex]);
+    const tweak = computeTweak(
+      walletPubkey.toBytes(),
+      new Uint8Array(0),
+      ETH_SEPOLIA_CHAIN_TAG,
+    );
+    const foreignPk = deriveForeignPk(groupPk, tweak);
+    setEthAddress(bytesToHex(ethAddressFromPk(foreignPk)));
+  }, [groupPkHex, walletPubkey]);
 
   useEffect(() => {
     if (!ethAddress) return;
@@ -158,22 +170,21 @@ export default function Home() {
       setTimeline((prev) => ({ ...prev, [name]: status }));
 
     try {
-      // -------- 1. Compute derivation in the browser --------
-      // v0.5 quirk: the Lindell '17 lib in apps/mpc-node tweaks P1's `x1`
-      // but cannot tweak P2's `cypher_x1` (which is Paillier-encrypted x1)
-      // without also re-encrypting and sending the new ciphertext to P2.
-      // Until we patch the protocol, the foreign address derives directly
-      // from the joint group_pk with NO tweak — one address per committee
-      // instead of per-PDA. The "no private key anywhere" property still
-      // holds; per-program-PDA isolation is a v1 task.
+      // -------- 1. Preview the derivation in the browser --------
+      // The program derives foreign_pk itself from the signer, so nothing here
+      // is authoritative — we compute it only to build the transaction and to
+      // show the user which address will move. If this disagreed with the
+      // program, finalize_signature would reject the signature.
       const groupPk = Uint8Array.from(
         Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
       );
-      const derivationSeeds = new Uint8Array(0);
-      // Decompress the 33-byte group_pk to 65 bytes (0x04 || X || Y).
-      const groupPkPoint = secp256k1Curves.Point.fromBytes(groupPk);
-      const foreignPk = groupPkPoint.toBytes(false);
-      const foreignPkXy = foreignPk.subarray(1); // 64 bytes (X || Y)
+      const derivationSeeds = new Uint8Array(0); // path; empty = default account
+      const tweak = computeTweak(
+        walletPubkey.toBytes(),
+        derivationSeeds,
+        ETH_SEPOLIA_CHAIN_TAG,
+      );
+      const foreignPk = deriveForeignPk(groupPk, tweak);
       const ethAddrBytes = ethAddressFromPk(foreignPk);
 
       // -------- 2. Build the unsigned Sepolia tx --------
@@ -236,7 +247,6 @@ export default function Home() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const signTxSig: string = await (ethDemoProgram.methods as any)
         .signEthTransfer(
-          Array.from(foreignPkXy),
           Array.from(recipient),
           Array.from(valueWeiBe),
           new BN(nonce.toString()),

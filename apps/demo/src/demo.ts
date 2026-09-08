@@ -83,6 +83,93 @@ function banner(line: string): void {
   console.log(`\n${bar}\n  ${line}\n${bar}\n`);
 }
 
+/**
+ * Top up a derived address from a sponsor key, so a run does not stall on a
+ * human visiting a faucet.
+ *
+ * This is the demo-sized version of the production answer to the gas problem.
+ * On Ethereum, gas is paid by the `from` account, and no third party can pay
+ * on behalf of a plain EOA — so somebody has to put ETH at the derived
+ * address before it can transact. Here that somebody is a key in .env; in
+ * production it is a relayer that fronts the gas and charges the user in SOL.
+ *
+ * Deliberately capped: this key is a hot wallet sitting in a dotfile, so it
+ * should only ever hold demo money, and a bug here should cost cents.
+ */
+const SPONSOR_MAX_TOPUP_WEI = 2_000_000_000_000_000n; // 0.002 ETH
+
+async function fundFromSponsor(
+  target: string,
+  need: bigint,
+): Promise<boolean> {
+  const raw = process.env.SEPOLIA_FUNDER_KEY?.trim();
+  if (!raw) return false;
+
+  const sk = Uint8Array.from(Buffer.from(raw.replace(/^0x/, ""), "hex"));
+  if (sk.length !== 32) {
+    console.log("  ⚠ SEPOLIA_FUNDER_KEY is not a 32-byte hex key — skipping sponsor");
+    return false;
+  }
+
+  const funderPk = secp256k1.getPublicKey(sk, false);
+  const funder = bytesToHex(ethAddressFromPk(funderPk));
+
+  const topUp = need > SPONSOR_MAX_TOPUP_WEI ? SPONSOR_MAX_TOPUP_WEI : need;
+  const funderBal = await sepolia.getBalance(funder);
+  const gasPrice = (await sepolia.getGasPrice()) * 2n;
+  const gasLimit = 21_000n;
+  const cost = topUp + gasPrice * gasLimit;
+
+  console.log(`  sponsor ${funder} (${(Number(funderBal) / 1e18).toFixed(6)} ETH)`);
+  if (funderBal < cost) {
+    console.log(
+      `  ⚠ sponsor balance ${funderBal} wei < ${cost} wei needed — falling back to faucet`,
+    );
+    return false;
+  }
+
+  const nonce = await sepolia.getNonce(funder);
+  const unsigned = encodeUnsignedLegacy({
+    nonce,
+    gasPriceWei: gasPrice,
+    gasLimit,
+    to: Uint8Array.from(Buffer.from(target.replace(/^0x/, ""), "hex")),
+    valueWeiBe: bigintToBe(topUp, 16),
+    data: new Uint8Array(0),
+    chainId: SEPOLIA_CHAIN_ID,
+  });
+  const sig = secp256k1.sign(keccak_256(unsigned), sk, { lowS: true });
+  const signed = encodeSignedLegacy(
+    {
+      nonce,
+      gasPriceWei: gasPrice,
+      gasLimit,
+      to: Uint8Array.from(Buffer.from(target.replace(/^0x/, ""), "hex")),
+      valueWeiBe: bigintToBe(topUp, 16),
+      data: new Uint8Array(0),
+    },
+    eip155V(sig.recovery!, SEPOLIA_CHAIN_ID),
+    bigintToBe(sig.r, 32),
+    bigintToBe(sig.s, 32),
+  );
+
+  const hash = await sepolia.sendRawTransaction(bytesToHex(signed));
+  console.log(`  → sponsored ${topUp} wei: https://sepolia.etherscan.io/tx/${hash}`);
+
+  // Wait for the balance to actually move rather than for a receipt: the
+  // balance is the thing the next step depends on.
+  for (let i = 0; i < 60; i++) {
+    const bal = await sepolia.getBalance(target).catch(() => 0n);
+    if (bal >= FUNDING_THRESHOLD_WEI) {
+      console.log(`  ✓ funded. balance: ${bal} wei`);
+      return true;
+    }
+    await sleep(3_000);
+  }
+  console.log("  ⚠ sponsor tx did not land within 3 minutes");
+  return false;
+}
+
 async function pollForFunding(addr: string): Promise<bigint> {
   let last = -1n;
   while (true) {
@@ -199,12 +286,21 @@ async function main() {
     balance = await sepolia.getBalance(ethAddress);
     console.log(`Current Sepolia balance: ${balance} wei (${(Number(balance) / 1e18).toFixed(6)} ETH)`);
     if (balance < FUNDING_THRESHOLD_WEI) {
-      console.log("\n→ Fund the address above with ~0.001 Sepolia ETH:");
-      console.log("    https://www.alchemy.com/faucets/ethereum-sepolia");
-      console.log("    https://sepoliafaucet.com/");
-      console.log("    https://faucet.quicknode.com/ethereum/sepolia\n");
-      console.log("Polling for funding (will resume automatically)...");
-      balance = await pollForFunding(ethAddress);
+      const sponsored = await fundFromSponsor(
+        ethAddress,
+        FUNDING_THRESHOLD_WEI - balance,
+      );
+      if (sponsored) {
+        balance = await sepolia.getBalance(ethAddress);
+      } else {
+        console.log("\n→ Fund the address above with ~0.001 Sepolia ETH:");
+        console.log("    (or set SEPOLIA_FUNDER_KEY in .env to auto-fund)");
+        console.log("    https://www.alchemy.com/faucets/ethereum-sepolia");
+        console.log("    https://sepoliafaucet.com/");
+        console.log("    https://faucet.quicknode.com/ethereum/sepolia\n");
+        console.log("Polling for funding (will resume automatically)...");
+        balance = await pollForFunding(ethAddress);
+      }
       console.log(`✓ Funded. Balance: ${balance} wei\n`);
     }
   } else {
