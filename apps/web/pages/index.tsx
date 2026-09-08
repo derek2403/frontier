@@ -75,6 +75,63 @@ function bytesToHex(b: Uint8Array): string {
   return "0x" + Array.from(b).map((n) => n.toString(16).padStart(2, "0")).join("");
 }
 
+// A step is `locked` until the one before it produced its artifact. Locking is
+// visual + pointer-events only; the underlying buttons are separately disabled,
+// so a stray click can never skip ahead.
+type StepState = "locked" | "active" | "done";
+
+function StepCard({
+  n,
+  title,
+  state,
+  children,
+}: {
+  n: number;
+  title: string;
+  state: StepState;
+  children: React.ReactNode;
+}) {
+  const locked = state === "locked";
+  return (
+    <section
+      aria-current={state === "active" ? "step" : undefined}
+      className={[
+        "rounded-2xl border p-5 transition",
+        state === "active"
+          ? "border-emerald-700/70 bg-zinc-900/60"
+          : state === "done"
+            ? "border-zinc-800 bg-zinc-900/30"
+            : "border-zinc-900 bg-zinc-900/10",
+        locked ? "pointer-events-none select-none opacity-40" : "",
+      ].join(" ")}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={[
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+            state === "done"
+              ? "bg-emerald-500 text-emerald-950"
+              : state === "active"
+                ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/60"
+                : "bg-zinc-800 text-zinc-500",
+          ].join(" ")}
+        >
+          {state === "done" ? "✓" : n}
+        </span>
+        <h2
+          className={[
+            "text-sm font-medium",
+            state === "locked" ? "text-zinc-500" : "text-zinc-100",
+          ].join(" ")}
+        >
+          {title}
+        </h2>
+      </div>
+      <div className="mt-4">{children}</div>
+    </section>
+  );
+}
+
 type RunResult = {
   ethAddress: string;
   recipient: string;
@@ -110,26 +167,46 @@ export default function Home() {
       .catch((e) => setError(`Could not load dev signer key: ${(e as Error).message}`));
   }, []);
 
+  // Derivation is deliberately NOT automatic. Each step of the demo is one
+  // button, so the audience sees the address appear as a distinct act rather
+  // than as page furniture that was already there on load.
+  //
+  // Changing wallet resets everything: the address is a function of the owner,
+  // so a stale one from the previous wallet would be actively misleading.
   useEffect(() => {
+    setEthAddress(null);
+    setBalance(null);
+    setResult(null);
+    setSignedHex(null);
+    setTimeline(INITIAL_TIMELINE);
+    setError(null);
+  }, [walletPubkey]);
+
+  const onDerive = () => {
     if (!groupPkHex || !walletPubkey) {
-      setEthAddress(null);
+      setError("committee key not loaded yet");
       return;
     }
-    // The address belongs to the CONNECTED WALLET, not to the committee.
-    // soda::request_signature derives the same value on-chain from the signer,
-    // so this is a local preview of what the program will compute — connect a
-    // different wallet and you get a different address.
-    const groupPk = Uint8Array.from(
-      Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
-    );
-    const tweak = computeTweak(
-      walletPubkey.toBytes(),
-      new Uint8Array(0),
-      CHAIN.chainTag,
-    );
-    const foreignPk = deriveForeignPk(groupPk, tweak);
-    setEthAddress(bytesToHex(ethAddressFromPk(foreignPk)));
-  }, [groupPkHex, walletPubkey]);
+    setError(null);
+    try {
+      // The address belongs to the CONNECTED WALLET, not to the committee.
+      // soda::request_signature derives the same value on-chain from the
+      // signer, so this is a preview of what the program will compute —
+      // connect a different wallet and you get a different address.
+      const groupPk = Uint8Array.from(
+        Buffer.from(groupPkHex.replace(/^0x/, ""), "hex"),
+      );
+      const tweak = computeTweak(
+        walletPubkey.toBytes(),
+        new Uint8Array(0),
+        CHAIN.chainTag,
+      );
+      const foreignPk = deriveForeignPk(groupPk, tweak);
+      setEthAddress(bytesToHex(ethAddressFromPk(foreignPk)));
+    } catch (e) {
+      setError(`derivation failed: ${(e as Error).message}`);
+    }
+  };
 
   useEffect(() => {
     if (!ethAddress) return;
@@ -370,11 +447,17 @@ export default function Home() {
     }
   };
 
-  const isFunded = balance !== null && balance >= 200_000_000_000_000n;
-  // Funding is no longer a gate: an unfunded address is topped up from the
-  // sponsor key on click. Blocking here just produced a dead button whenever
-  // the derivation changed, since every new owner starts at a zero balance.
+  // Funding is not a gate: an unfunded address is topped up from the sponsor
+  // key on click. Blocking on balance just produced a dead button whenever the
+  // derivation changed, since every new owner starts at zero.
   const buttonDisabled = !connected || !ethAddress;
+
+  // Three explicit steps. Each is complete only when its own artifact exists,
+  // so the stepper reflects real state rather than a counter we increment.
+  const step1Done = connected && !!walletPubkey;
+  const step2Done = !!ethAddress;
+  const step3Done = !!result;
+  const activeStep = !step1Done ? 1 : !step2Done ? 2 : 3;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -406,119 +489,122 @@ export default function Home() {
             A Solana program just signed an Ethereum transaction.
           </h1>
           <p className="mt-3 text-zinc-400">
-            The address below belongs to{" "}
-            <em>your connected Solana wallet</em>. The{" "}
-            <code className="font-mono">soda</code> program derives it on-chain
+            Three steps. Your Solana wallet owns an {CHAIN.name} address that
+            the <code className="font-mono">soda</code> program derives on-chain
             as <code className="font-mono">group_pk + tweak·G</code> — the
             caller never names an address, so no wallet can request a signature
             for another&apos;s. Solana&apos;s{" "}
             <code className="font-mono">secp256k1_recover</code> syscall
-            verifies the signature on-chain before it&apos;s broadcast to
-            Sepolia.
+            verifies the signature on-chain before it&apos;s broadcast.
           </p>
-          {connected && walletPubkey ? (
-            <p className="mt-3 text-xs font-mono text-emerald-300/80">
-              connected: {walletPubkey.toBase58().slice(0, 8)}…{walletPubkey.toBase58().slice(-6)}
-            </p>
-          ) : (
-            <p className="mt-3 text-xs text-amber-300/80">
-              Connect Phantom (top-right) on devnet to enable the Sign &amp; Send button.
-            </p>
-          )}
         </div>
 
-        {connected ? (
-          <>
-            <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
-              <div>SODA program:     {programs.soda}</div>
-              <div>eth_demo program: {programs.ethDemo}</div>
-              <div>Solana cluster:   devnet (Helius)</div>
-            </div>
+        {/* Every step renders always. A locked step stays visible and dimmed so
+            the audience can see the whole path up front instead of watching
+            cards appear one at a time. */}
+        <div className="space-y-4">
+          {/* ---------- STEP 1 · connect ---------- */}
+            <StepCard
+              n={1}
+              title="Connect your Solana wallet"
+              state={step1Done ? "done" : "active"}
+            >
+              {step1Done && walletPubkey ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="font-mono text-sm text-emerald-200">
+                    {walletPubkey.toBase58()}
+                  </div>
+                  <WalletMultiButton />
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-zinc-400">
+                    Phantom on devnet. This wallet is the <em>owner</em> — the
+                    Ethereum address in the next step is derived from its public
+                    key, and only it can request a signature for that address.
+                  </p>
+                  <div className="mt-4">
+                    <WalletMultiButton />
+                  </div>
+                </>
+              )}
+            </StepCard>
 
-            {/* Signing backend. Reflects how this deployment is actually
-                configured rather than asserting a committee that may not be
-                reachable — the panel used to hardcode a decommissioned host. */}
-            <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                </span>
-                {MPC_COORDINATOR
-                  ? "MPC committee · 2-of-2 Lindell '17 ECDSA"
-                  : "Signer · v0 single key (server-side)"}
-              </div>
-              <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-                {MPC_COORDINATOR ? (
-                  <>
-                    <div>node P1 · share x1</div>
-                    <div>node P2 · share x2</div>
-                    <div>coordinator · {MPC_COORDINATOR}</div>
-                    <div className="pt-1 text-xs text-emerald-300/60">
-                      Neither node holds the joint secret. Signing runs the
-                      4-message Lindell &apos;17 protocol; the on-chain{" "}
-                      <code>secp256k1_recover</code> syscall verifies the result.
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>key · keyshare.dev.json (one key, on the server)</div>
-                    <div className="pt-1 text-xs text-emerald-300/60">
-                      The address below is derived from{" "}
-                      <em>your connected wallet</em>:{" "}
-                      <code>group_pk + tweak·G</code>, and the on-chain{" "}
-                      <code>secp256k1_recover</code> syscall verifies the
-                      signature before anything is broadcast. Replacing this
-                      single key with a threshold committee is what removes the
-                      last trusted party.
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
+            {/* ---------- STEP 2 · derive ---------- */}
+            <StepCard
+              n={2}
+              title="Derive your Ethereum address"
+              state={step2Done ? "done" : activeStep === 2 ? "active" : "locked"}
+            >
+              {step2Done ? (
+                <>
+                  <DerivedAddressCard
+                    ethAddress={ethAddress}
+                    sepoliaBalanceWei={balance}
+                    loading={false}
+                  />
+                  <p className="mt-3 text-xs text-zinc-500">
+                    This is a pure function of your wallet:{" "}
+                    <code className="font-mono">group_pk + tweak·G</code> where{" "}
+                    <code className="font-mono">
+                      tweak = sha256(domain ‖ your&nbsp;pubkey ‖ path ‖ chain)
+                    </code>
+                    . No registry, nothing stored — connect a different wallet
+                    and you get a different address.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-zinc-400">
+                    Compute the {CHAIN.name} address that your Solana wallet
+                    owns. The <code className="font-mono">soda</code> program
+                    derives the same value on-chain from whoever signs, so the
+                    caller can never name an address it does not control.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={!groupPkHex}
+                    onClick={onDerive}
+                    className="mt-4 w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"
+                  >
+                    {groupPkHex ? "Derive address" : "Loading committee key…"}
+                  </button>
+                </>
+              )}
+            </StepCard>
 
-            <DerivedAddressCard
-              ethAddress={ethAddress}
-              sepoliaBalanceWei={balance}
-              loading={!groupPkHex}
-            />
-
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-              <div className="text-xs uppercase tracking-wider text-zinc-500">
-                Action
-              </div>
-              <div className="mt-2 font-mono text-sm text-emerald-200">
+            {/* ---------- STEP 3 · transact ---------- */}
+            <StepCard
+              n={3}
+              title={`Deposit into Aave V3 on ${CHAIN.name}`}
+              state={step3Done ? "done" : activeStep === 3 ? "active" : "locked"}
+            >
+              <div className="font-mono text-sm text-emerald-200">
                 Aave V3 · depositETH
               </div>
-              <p className="mt-3 text-xs text-zinc-500">
+              <p className="mt-2 text-xs text-zinc-500">
                 Calls{" "}
                 <code className="font-mono">
                   WrappedTokenGatewayV3.depositETH
                 </code>{" "}
-                on {CHAIN.name} with 0.0001 ETH. The derived address receives
-                aWETH — a lending position held by a Solana account, earning
-                interest from the next block onward.
+                with 0.0001 ETH. The derived address receives aWETH — a lending
+                position held by a Solana account, earning interest from the
+                next block. Gas is topped up automatically from the sponsor key.
               </p>
-            </div>
-
-            <SignAndSendButton
-              disabled={buttonDisabled}
-              busy={busy}
-              label={`Sign & deposit 0.0001 ETH into Aave V3 on ${CHAIN.name}`}
-              onClick={onSign}
-            />
-          </>
-        ) : (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-8 text-center">
-            <div className="text-lg font-medium text-zinc-200">
-              Connect Phantom to begin
-            </div>
-            <div className="mt-2 text-sm text-zinc-500">
-              Use the button in the top-right. Devnet only — Phantom will switch
-              automatically.
-            </div>
-          </div>
-        )}
+              <div className="mt-4">
+                <SignAndSendButton
+                  disabled={buttonDisabled}
+                  busy={busy}
+                  label={
+                    step3Done
+                      ? "Deposit again"
+                      : `Sign & deposit 0.0001 ETH into Aave V3`
+                  }
+                  onClick={onSign}
+                />
+              </div>
+            </StepCard>
+        </div>
 
         {error ? (
           <div className="rounded-lg bg-rose-950/40 border border-rose-900 px-4 py-3 text-sm text-rose-200">
@@ -617,6 +703,55 @@ export default function Home() {
             </div>
           </div>
         ) : null}
+
+        {/* Deployment facts, below the steps: reference material for anyone who
+            asks "what am I actually looking at", not part of the click path. */}
+        <div className="grid gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-4 text-sm font-mono text-zinc-400">
+          <div>SODA program:     {programs.soda}</div>
+          <div>eth_demo program: {programs.ethDemo}</div>
+          <div>Solana cluster:   devnet (Helius)</div>
+        </div>
+
+        {/* Signing backend. Reflects how this deployment is actually
+            configured rather than asserting a committee that may not be
+            reachable — the panel used to hardcode a decommissioned host. */}
+        <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            </span>
+            {MPC_COORDINATOR
+              ? "MPC committee · 2-of-2 Lindell '17 ECDSA"
+              : "Signer · v0 single key (server-side)"}
+          </div>
+          <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
+            {MPC_COORDINATOR ? (
+              <>
+                <div>node P1 · share x1</div>
+                <div>node P2 · share x2</div>
+                <div>coordinator · {MPC_COORDINATOR}</div>
+                <div className="pt-1 text-xs text-emerald-300/60">
+                  Neither node holds the joint secret. Signing runs the
+                  4-message Lindell &apos;17 protocol; the on-chain{" "}
+                  <code>secp256k1_recover</code> syscall verifies the result.
+                </div>
+              </>
+            ) : (
+              <>
+                <div>key · keyshare.dev.json (one key, on the server)</div>
+                <div className="pt-1 text-xs text-emerald-300/60">
+                  The derived address above comes from{" "}
+                  <em>your connected wallet</em>:{" "}
+                  <code>group_pk + tweak·G</code>, and the on-chain{" "}
+                  <code>secp256k1_recover</code> syscall verifies the signature
+                  before anything is broadcast. Replacing this single key with a
+                  threshold committee is what removes the last trusted party.
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </main>
     </div>
   );
