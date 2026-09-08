@@ -173,6 +173,7 @@ export default function Home() {
           groupPkHex?: string;
           chain?: string;
           signer?: SignerInfo;
+          payer?: "env" | "file" | "missing";
           error?: string;
         }) => {
           if (d.groupPkHex) setGroupPkHex(d.groupPkHex);
@@ -192,6 +193,13 @@ export default function Home() {
               "The server has no signer key: neither SODA_SIGNER_KEY_HEX nor " +
                 "keyshare.dev.json is present, so /api/finalize cannot sign. " +
                 "On Vercel, set SODA_SIGNER_KEY_HEX to the committee's key.",
+            );
+          } else if (d.payer === "missing") {
+            setConfigError(
+              "The server has no Solana wallet to pay for finalize_signature: " +
+                "neither ANCHOR_WALLET_JSON nor a keypair file is present. On " +
+                "Vercel, set ANCHOR_WALLET_JSON to the contents of " +
+                "~/.config/solana/id.json (the 64-number array), then redeploy.",
             );
           }
         },

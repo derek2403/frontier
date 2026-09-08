@@ -11,6 +11,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { SODA_PROGRAM_ID as SODA_PROGRAM_ID_STR } from "@/lib/idls";
 import { serverChain } from "@/lib/chain";
@@ -19,6 +20,17 @@ const SODA_PROGRAM_ID = new PublicKey(SODA_PROGRAM_ID_STR);
 // Same path /api/finalize reads; reported here so a deployment with no key
 // says so at page load rather than after Phantom has already signed.
 const SIGNER_KEY_PATH = resolve(process.cwd(), "../..", "keyshare.dev.json");
+
+// The Solana wallet that pays for finalize_signature. Same lookup order as
+// loadServerWallet() in /api/finalize. A deployment without one gets as far
+// as Phantom signing sign_eth_transfer and then fails, leaving a SigRequest
+// on-chain that nothing will ever finalize — so report it at load too.
+function payerInfo(): "env" | "file" | "missing" {
+  if ((process.env.ANCHOR_WALLET_JSON ?? "").trim()) return "env";
+  const path =
+    process.env.ANCHOR_WALLET ?? `${homedir()}/.config/solana/id.json`;
+  return existsSync(path) ? "file" : "missing";
+}
 
 // What this server will actually do when asked to sign. Reported here so the
 // page describes the real backend instead of a NEXT_PUBLIC_* copy of it that
@@ -78,6 +90,7 @@ export default async function handler(
       // so a half-set deployment fails at load instead of at broadcast.
       chain: serverChain().key,
       signer: signerInfo(),
+      payer: payerInfo(),
     });
   } catch (e) {
     return res.status(500).json({
