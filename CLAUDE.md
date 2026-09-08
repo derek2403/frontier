@@ -48,8 +48,8 @@ build is the next-but-unbuilt step.
 
 | Component | Path | Run | What it does | Verified by |
 |---|---|---|---|---|
-| **soda program** | `contracts/programs/soda/` | (deployed) | On-chain SODA core: `init_committee`, `request_signature`, `finalize_signature` (with on-chain `secp256k1_recover`) | Live on devnet at `99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4`. 7 Rust unit tests pass (G+G=2G, etc). |
-| **eth_demo program** | `contracts/programs/eth_demo/` | (deployed) | Demo harness: builds RLP, keccaks, CPIs into soda. Emits `EthTxRequested` event with the unsigned RLP for the relayer. | Live on devnet at `9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM`. 9 Rust unit tests pass (EIP-155 mainnet vector). |
+| **soda program** | `contracts/programs/soda/` | (deployed) | On-chain SODA core: `init_committee`, `request_signature`, `finalize_signature` (with on-chain `secp256k1_recover`) | Live on devnet at `2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd`. 7 Rust unit tests pass (G+G=2G, etc). |
+| **eth_demo program** | `contracts/programs/eth_demo/` | (deployed) | Demo harness: builds RLP, keccaks, CPIs into soda. Emits `EthTxRequested` event with the unsigned RLP for the relayer. | Live on devnet at `GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA`. 9 Rust unit tests pass (EIP-155 mainnet vector). |
 | **soda-sdk (TS)** | `packages/soda-sdk/` | `pnpm sdk:test` | Derivation, RLP encode/decode, EIP-155 v calc, EthRpc client. Source-only ESM workspace package consumed by demo + web + relayer. | 13/13 vitest parity tests (G+G=2G + EIP-155 canonical + RLP round-trip). |
 | **CLI demo** | `apps/demo/` | `./demo.sh` (defaults to devnet) | One-shot orchestrator: validator/deploy/airdrop chores → init committee → sign on Solana → sign ECDSA → finalize on-chain → broadcast → auto-runs verify. | Multiple real Sepolia txs broadcast today; Etherscan + Solscan visible. |
 | **verify tool** | `apps/demo/src/verify.ts` | `pnpm verify <eth_hash>` | Cryptographic audit: 6 checks tying the broadcast Sepolia tx back to the SigRequest PDA on Solana. Reads only public state. | Auto-chained from `demo.sh`; manually `pnpm verify 0x…` works against any past tx. |
@@ -433,7 +433,38 @@ pnpm sdk:test                                  # 10 TS parity tests
   there's no real broadcast). Judges/viewers see the cryptographic audit
   without needing to copy/paste a hash between commands.
 
-## AWS MPC committee — live as of 2026-05-11
+## AWS MPC committee — DECOMMISSIONED 2026-09-07
+
+**Do not trust the IPs below.** The instances are gone. Probing
+`http://32.198.7.34:8000/health` on 2026-09-07 returned nothing, and the
+operator confirmed AWS is shut down. Both AWS shares died with the hosts, so
+that committee can never sign again. The live committee is on Render — see
+"Render MPC deployment" below.
+
+Consequence worth knowing: the on-chain `Committee` PDA on devnet still holds
+the **AWS** `group_pk` (`0345023a23…`). Until someone runs
+`mpc:update-committee`, `finalize_signature` rejects every signature the
+Render committee produces. The blocker is the authority:
+
+```
+Committee PDA        2tjKM2NtTprRuRjb5vq5pRoUu4sGVwc2QnshxjmS4hs1
+Committee.authority  Aji3UrEDSNhMpxeSnFpgzdJB2WyL8jwHYynz6vbAgdpZ
+```
+
+That is not the laptop wallet (`Dzf8khTdYH9QRBuwoQAQ2Wn5NxqiD7UUXHq2t7ebrFpQ`),
+so only the holder of `Aji3Ur…` can migrate the key.
+
+Sepolia balances on 2026-09-07, all orphaned:
+
+| Address | Derived from | Balance |
+|---|---|---|
+| `0x1ee047516860477defee25a6a5ed50e19f4d8fb9` | AWS `group_pk`, still on-chain | 0.00406 ETH, unsignable |
+| `0xc1caf8e69d25f302b1b4818da08b94424f98f364` | Render `group_pk` | 0 |
+| `0x13ea4bd81b997103cc0dd57b58307ce952268a37` | v0 dev keyshare | 0.9997 ETH, `keyshare.dev.json` missing |
+
+Whichever key ends up on-chain, its address needs funding before a demo.
+
+### Historical record of the AWS deploy
 
 The Lindell '17 2-of-2 committee from `aws.md` is now running on AWS. End-to-end
 signature test confirmed working: a `POST /sign` to the coordinator returns a valid

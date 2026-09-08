@@ -3,6 +3,7 @@ name = "signer"
 version.workspace = true
 description = "SODA single-key signer daemon (1-of-1 dev signer)"
 edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "signer"

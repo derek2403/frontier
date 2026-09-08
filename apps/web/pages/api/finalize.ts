@@ -4,7 +4,7 @@
 // eth_demo::sign_eth_transfer instruction. The on-chain SigRequest PDA
 // now exists with the right payload + foreign_pk_xy.
 //
-// This endpoint does the rest: AWS MPC sign → soda::finalize_signature →
+// This endpoint does the rest: MPC sign → soda::finalize_signature →
 // broadcast the assembled signed RLP to Sepolia.
 
 import type { NextApiRequest, NextApiResponse } from "next";

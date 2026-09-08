@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use solana_sdk::pubkey::Pubkey;
 use std::{env, fs, path::PathBuf, str::FromStr};
 
-const DEFAULT_SODA_PROGRAM_ID: &str = "99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4";
-const DEFAULT_ETH_DEMO_PROGRAM_ID: &str = "9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM";
+const DEFAULT_SODA_PROGRAM_ID: &str = "2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd";
+const DEFAULT_ETH_DEMO_PROGRAM_ID: &str = "GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA";
 
 pub struct Config {
     pub rpc_url: String,

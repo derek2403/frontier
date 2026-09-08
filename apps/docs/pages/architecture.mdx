@@ -77,8 +77,8 @@ Two programs, both deployed on Solana devnet:
 
 | Program | Devnet ID | Purpose |
 | --- | --- | --- |
-| `soda` | `99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4` | Core primitive: `init_committee`, `request_signature`, `finalize_signature` |
-| `eth_demo` | `9g9eAkNbjpkVLi692vhgcUapJKS26yQTgsLzKbXKJXWM` | Demo harness: builds RLP, keccaks, CPIs into `soda` |
+| `soda` | `2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd` | Core primitive: `init_committee`, `request_signature`, `finalize_signature` |
+| `eth_demo` | `GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA` | Demo harness: builds RLP, keccaks, CPIs into `soda` |
 
 The `soda` program never imports `k256` or any heavy curve crate. It uses only
 the Solana runtime's `secp256k1_recover` syscall (~25,000 CU) for verification.

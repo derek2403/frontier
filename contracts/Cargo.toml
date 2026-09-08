@@ -1,4 +1,12 @@
 [workspace]
+# Stays at 2: anchor-cli 0.32.1 parses this manifest itself and rejects "3".
+# The MSRV-aware resolution that Cargo.lock needed was done with the host
+# cargo using `resolver = "3"` temporarily. Cargo.lock is now COMMITTED, so
+# nothing re-resolves and the setting no longer matters.
+#
+# Why it mattered: Solana 2.3.0 bundles cargo 1.84, which cannot parse any
+# manifest using edition2024, and current blake3/hashbrown/digest releases all
+# use it. Regenerate the lock with the host cargo if you ever need to.
 resolver = "2"
 members = [
     "programs/soda",
@@ -9,6 +17,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# Must match the cargo shipped in the pinned solana_version in Anchor.toml.
+rust-version = "1.84"
 
 [workspace.dependencies]
 anchor-lang = "0.32.1"

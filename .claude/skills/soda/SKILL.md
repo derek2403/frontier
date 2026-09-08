@@ -46,12 +46,12 @@ pnpm add @soda-sdk/core @solana/web3.js @noble/hashes
 
 ### Step 2: Read the committee public key
 
-The committee's aggregate `group_pk` lives in a `Committee` PDA on the deployed `soda` program (devnet `99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4`).
+The committee's aggregate `group_pk` lives in a `Committee` PDA on the deployed `soda` program (devnet `2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd`).
 
 ```ts
 import { Connection, PublicKey } from '@solana/web3.js'
 
-const SODA_PROGRAM_ID = new PublicKey('99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4')
+const SODA_PROGRAM_ID = new PublicKey('2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd')
 const conn = new Connection('https://api.devnet.solana.com')
 const [committeePda] = PublicKey.findProgramAddressSync(
   [Buffer.from('committee')], SODA_PROGRAM_ID,
