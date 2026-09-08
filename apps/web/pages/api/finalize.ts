@@ -19,11 +19,14 @@ import {
 } from "@solana/web3.js";
 import {
   bigintToBe,
+  bytesToBigInt,
+  computeTweak,
   eip155V,
   encodeSignedLegacy,
   encodeUnsignedLegacy,
   EthRpc,
 } from "@soda-sdk/core";
+import { secp256k1 } from "@noble/curves/secp256k1";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -32,6 +35,24 @@ import { sodaIdl } from "@/lib/idls";
 
 const REPO_ROOT = resolve(process.cwd(), "../..");
 const LAST_TX_PATH = resolve(REPO_ROOT, ".last-tx-hash");
+const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
+
+/**
+ * The v0 single-key signer, shared with apps/demo and lib/run-demo.ts so all
+ * three derive the same addresses from the same committee key.
+ */
+function loadOrCreateSignerKey(): Uint8Array {
+  if (existsSync(SIGNER_KEY_PATH)) {
+    return Uint8Array.from(
+      Buffer.from(readFileSync(SIGNER_KEY_PATH, "utf8").trim(), "hex"),
+    );
+  }
+  const sk = secp256k1.utils.randomPrivateKey();
+  writeFileSync(SIGNER_KEY_PATH, Buffer.from(sk).toString("hex"), {
+    mode: 0o600,
+  });
+  return sk;
+}
 
 const SEPOLIA_CHAIN_ID = 11_155_111n;
 
@@ -183,41 +204,68 @@ export default async function handler(
     );
     const payload: Uint8Array = Uint8Array.from(sigRequest.payload);
 
-    // v0.5: no tweak in the MPC call. The Lindell '17 lib's cypher_x1 (P2's
-    // Paillier-encrypted view of x1) can't be rewritten per-signature, so
-    // the only consistent path is sign-for-group_pk-directly. Per-PDA
-    // foreign addresses are a v1 task. The frontend stored foreign_pk_xy =
-    // group_pk_xy, so MPC signing for group_pk produces a matching sig.
-    // Strip any trailing slashes the operator added in the env var — Fastify
-    // on the coordinator treats `//sign` as a different route from `/sign`
-    // and 404s, which is silent-looking. Defensive normalization.
+    // Two signing paths, selected by whether MPC_COORDINATOR_URL is set —
+    // the same switch apps/demo and lib/run-demo.ts use.
+    //
+    //   set   → MPC committee. Note the committee cannot currently apply the
+    //           derivation tweak (Safeheron shares multiplicatively and P2
+    //           holds a Paillier ciphertext of x1 fixed at DKG), so it signs
+    //           for the untweaked group_pk and finalize_signature will reject
+    //           it. Leave it unset until that is fixed.
+    //   unset → v0 single-key signer. Applies the tweak correctly, so the
+    //           signature recovers to the per-owner derived address. One key
+    //           on disk, so this is not the "no private key anywhere" claim.
+    //
+    // Trailing slashes are stripped because Fastify treats `//sign` as a
+    // different route and 404s, which looks silent.
     const MPC_URL = (process.env.MPC_COORDINATOR_URL ?? "").replace(/\/+$/, "");
-    if (!MPC_URL) {
-      return res.status(500).json({ error: "MPC_COORDINATOR_URL not set" });
+
+    let sigBytes: Buffer;
+    let recoveryId: number;
+
+    if (MPC_URL) {
+      const MPC_TOKEN = process.env.MPC_COORDINATOR_TOKEN;
+      const mpcRes = await fetch(`${MPC_URL}/sign`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
+        },
+        // Name the on-chain request; the nodes derive payload + tweak from it.
+        body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
+      });
+      if (!mpcRes.ok) {
+        throw new Error(`mpc coordinator ${mpcRes.status}: ${await mpcRes.text()}`);
+      }
+      const sig = (await mpcRes.json()) as { r: string; s: string; v: number };
+      sigBytes = Buffer.concat([
+        Buffer.from(sig.r, "hex"),
+        Buffer.from(sig.s, "hex"),
+      ]);
+      recoveryId = sig.v;
+    } else {
+      // Re-derive the tweak from what the PROGRAM stored, not from anything
+      // the client sent, so this signs for exactly the address on-chain.
+      const tweak = computeTweak(
+        new PublicKey(sigRequest.requester).toBytes(),
+        Uint8Array.from(sigRequest.derivationSeeds),
+        Uint8Array.from(sigRequest.chainTag),
+      );
+      const devSk = loadOrCreateSignerKey();
+      const tweakedSkBig =
+        (bytesToBigInt(devSk) + bytesToBigInt(tweak)) % secp256k1.CURVE.n;
+      if (tweakedSkBig === 0n) throw new Error("tweaked sk is zero");
+      const sig = secp256k1.sign(payload, bigintToBe(tweakedSkBig, 32), {
+        lowS: true,
+      });
+      sigBytes = Buffer.from(sig.toCompactRawBytes());
+      recoveryId = sig.recovery!;
     }
-    const MPC_TOKEN = process.env.MPC_COORDINATOR_TOKEN;
-    const mpcRes = await fetch(`${MPC_URL}/sign`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
-      },
-      // Name the on-chain request; the nodes derive payload + tweak from it.
-      body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
-    });
-    if (!mpcRes.ok) {
-      throw new Error(`mpc coordinator ${mpcRes.status}: ${await mpcRes.text()}`);
-    }
-    const sig = (await mpcRes.json()) as { r: string; s: string; v: number };
-    const sigBytes = Buffer.concat([
-      Buffer.from(sig.r, "hex"),
-      Buffer.from(sig.s, "hex"),
-    ]);
 
     // Submit finalize_signature with server wallet as payer.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const finalizeSignatureTx = await (sodaProgram.methods as any)
-      .finalizeSignature(Array.from(sigBytes), sig.v)
+      .finalizeSignature(Array.from(sigBytes), recoveryId)
       .accounts({
         committee: PublicKey.findProgramAddressSync(
           [Buffer.from("committee")],
@@ -251,12 +299,12 @@ export default async function handler(
       );
     }
 
-    const v = eip155V(sig.v as 0 | 1, SEPOLIA_CHAIN_ID);
+    const v = eip155V(recoveryId as 0 | 1, SEPOLIA_CHAIN_ID);
     const signedRlp = encodeSignedLegacy(
       baseTx,
       v,
-      Buffer.from(sig.r, "hex"),
-      Buffer.from(sig.s, "hex"),
+      Uint8Array.from(sigBytes.subarray(0, 32)),
+      Uint8Array.from(sigBytes.subarray(32, 64)),
     );
     const signedHex = "0x" + Buffer.from(signedRlp).toString("hex");
 
@@ -283,7 +331,7 @@ export default async function handler(
       ethTxHash,
       signedHex,
       finalizeSignatureTx,
-      recoveryId: sig.v,
+      recoveryId,
       ethAddress,
       isSelfTransfer,
     };

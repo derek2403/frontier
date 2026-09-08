@@ -28,20 +28,19 @@ const STEPS: Array<{
   },
   {
     key: "signOffChain",
-    label: "MPC committee · 2-of-2 Lindell '17",
-    sub: "Coordinator drives a 4-message protocol between P1 and P2",
+    label: "Sign the payload",
+    sub: "Signs with group_sk + tweak, so the signature recovers to your derived address",
     details: [
-      "1. P1 → message1   (commitment to k1·G)",
-      "2. P2 → message2   (k2·G + Schnorr proof)",
-      "3. P1 → message3   (open commit + Schnorr proof)",
-      "4. P2 → message4   (Paillier-homomorphic partial sig)",
-      "P1 decrypts, finalizes (r, s, recovery_id)",
+      "tweak  = sha256(\"SODA-v1\" || owner || path || chain_tag)",
+      "sk'    = (group_sk + tweak) mod n",
+      "sig    = ecdsa_sign(payload, sk')   [low-s]",
+      "recovers to group_pk + tweak·G — exactly what the program stored",
     ],
   },
   {
     key: "finalizeOnChain",
     label: "Solana: finalize_signature",
-    sub: "secp256k1_recover verifies the MPC sig matches stored foreign_pk_xy",
+    sub: "secp256k1_recover verifies the signature matches the program-derived foreign_pk_xy",
   },
   {
     key: "broadcastEth",

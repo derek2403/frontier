@@ -37,8 +37,10 @@ const WalletMultiButton = dynamic(
   { ssr: false },
 );
 
-const MPC_COORDINATOR =
-  process.env.NEXT_PUBLIC_MPC_COORDINATOR_URL ?? "http://32.198.7.34:8000";
+// Display only — the browser never calls this; /api/finalize does the signing
+// server-side. Empty by default: the old hardcoded AWS address is long dead,
+// and a stale default made the UI claim a committee that was not reachable.
+const MPC_COORDINATOR = process.env.NEXT_PUBLIC_MPC_COORDINATOR_URL ?? "";
 
 const DOCS_URL =
   process.env.NEXT_PUBLIC_DOCS_URL ?? "https://frontier-docs-cazz.vercel.app";
@@ -356,11 +358,15 @@ export default function Home() {
             A Solana program just signed an Ethereum transaction.
           </h1>
           <p className="mt-3 text-zinc-400">
-            The address below is owned by an{" "}
-            <code className="font-mono">eth_demo</code> program PDA on Solana
-            — no private key. Two MPC nodes on AWS produce the signature
-            jointly; Solana&apos;s <code className="font-mono">secp256k1_recover</code>{" "}
-            syscall verifies it on-chain, then it&apos;s broadcast to Sepolia.
+            The address below belongs to{" "}
+            <em>your connected Solana wallet</em>. The{" "}
+            <code className="font-mono">soda</code> program derives it on-chain
+            as <code className="font-mono">group_pk + tweak·G</code> — the
+            caller never names an address, so no wallet can request a signature
+            for another&apos;s. Solana&apos;s{" "}
+            <code className="font-mono">secp256k1_recover</code> syscall
+            verifies the signature on-chain before it&apos;s broadcast to
+            Sepolia.
           </p>
           {connected && walletPubkey ? (
             <p className="mt-3 text-xs font-mono text-emerald-300/80">
@@ -381,24 +387,45 @@ export default function Home() {
               <div>Solana cluster:   devnet (Helius)</div>
             </div>
 
-            {/* Live MPC committee status */}
+            {/* Signing backend. Reflects how this deployment is actually
+                configured rather than asserting a committee that may not be
+                reachable — the panel used to hardcode a decommissioned host. */}
             <div className="rounded-2xl border border-emerald-900/60 bg-emerald-950/20 p-4">
               <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-emerald-400">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
                 </span>
-                Live MPC committee · 2-of-2 Lindell &apos;17 ECDSA
+                {MPC_COORDINATOR
+                  ? "MPC committee · 2-of-2 Lindell '17 ECDSA"
+                  : "Signer · v0 single key (server-side)"}
               </div>
               <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-                <div>node P1 · us-east-1 · share x1</div>
-                <div>node P2 · us-east-1 · share x2</div>
-                <div>coordinator · {MPC_COORDINATOR}</div>
-                <div className="pt-1 text-xs text-emerald-300/60">
-                  Neither node holds the joint secret. Signing runs the 4-message
-                  Lindell &apos;17 protocol; the on-chain{" "}
-                  <code>secp256k1_recover</code> syscall verifies the result.
-                </div>
+                {MPC_COORDINATOR ? (
+                  <>
+                    <div>node P1 · share x1</div>
+                    <div>node P2 · share x2</div>
+                    <div>coordinator · {MPC_COORDINATOR}</div>
+                    <div className="pt-1 text-xs text-emerald-300/60">
+                      Neither node holds the joint secret. Signing runs the
+                      4-message Lindell &apos;17 protocol; the on-chain{" "}
+                      <code>secp256k1_recover</code> syscall verifies the result.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>key · keyshare.dev.json (one key, on the server)</div>
+                    <div className="pt-1 text-xs text-emerald-300/60">
+                      The address below is derived from{" "}
+                      <em>your connected wallet</em>:{" "}
+                      <code>group_pk + tweak·G</code>, and the on-chain{" "}
+                      <code>secp256k1_recover</code> syscall verifies the
+                      signature before anything is broadcast. Replacing this
+                      single key with a threshold committee is what removes the
+                      last trusted party.
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -511,7 +538,7 @@ export default function Home() {
             <div className="grid grid-cols-1 gap-1 border-t border-emerald-900/50 pt-3 text-xs font-mono text-emerald-300/70 sm:grid-cols-[auto_1fr] sm:gap-x-4">
               <span className="text-emerald-300/50">from</span>
               <span className="break-all">
-                {result.ethAddress} (controlled by Solana, no private key)
+                {result.ethAddress} (derived from your Solana wallet)
               </span>
               <span className="text-emerald-300/50">to</span>
               <span className="break-all">

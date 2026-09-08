@@ -1,17 +1,18 @@
 // Returns the committee's compressed secp256k1 group_pk so the page can
 // derive the ETH address client-side.
 //
-// Reads from the on-chain Committee PDA, NOT from a local key file —
-// after the MPC migration (update_committee), the joint key is whatever
-// the AWS MPC committee produced via DKG. The private material never
-// exists in one place.
+// Reads from the on-chain Committee PDA rather than a local key file, so the
+// page always reflects whatever key the deployed committee actually holds.
+//
+// The program id comes from the committed IDL, not a literal: this file used
+// to hardcode the pre-`anchor keys sync` address, which silently pointed the
+// whole UI at a different deployment than the rest of the app.
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { SODA_PROGRAM_ID as SODA_PROGRAM_ID_STR } from "@/lib/idls";
 
-const SODA_PROGRAM_ID = new PublicKey(
-  "99apYWpnoMWwA2iXyJZcTMoTEag6tdFasjujdhdeG8b4",
-);
+const SODA_PROGRAM_ID = new PublicKey(SODA_PROGRAM_ID_STR);
 
 function solanaRpc(): string {
   return (
