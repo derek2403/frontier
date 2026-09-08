@@ -56,6 +56,14 @@ Solana signature, proven on Solana, and only then signed and broadcast.
 Every action leaves a Solana transaction behind it, so the audit trail is
 on-chain and complete.
 
+The owner does not have to be a person. The same derivation works for a
+program-derived address (PDA), so a Solana **program** can own an Ethereum
+or Bitcoin address and act on it by CPI, with no human and no custodian in
+the loop. Phantom is a wallet for people; SODA is also a wallet for smart
+contracts. A contract cannot click "Sign", and until now that meant every
+autonomous vault, agent or scheduled strategy on Solana had to hand its
+foreign-chain keys to a SaaS custodian.
+
 ## What works today
 
 Everything below has been run end to end on Solana devnet and Base Sepolia
@@ -182,29 +190,55 @@ What is not yet where it needs to be:
   verification is identical in both modes.
 - **Shares are plaintext files.** Production wants TEE or KMS-wrapped
   shares.
+- **Requests are free.** Nothing stops someone spamming `request_signature`.
+  The per-request fee above is the fix, and it is also the business model.
+- **The program has an upgrade authority.** As with every bridge that was
+  ever drained through its upgrade key, this needs a timelock and a
+  multisig before real value sits behind it.
 
 The trust today is "the operator will not misuse the key". The trust at the
 end of the roadmap is "at least *t* of *n* independent, bonded operators
 would have to collude, and the program on Solana still verifies every
-signature regardless".
+signature regardless". Every risk in this list also exists for wrapped
+assets and bridges, usually in a worse form with a single corporate key.
+The right question is not "is it trustless" but "is the trust surface
+smaller than what it replaces".
 
 ## Use cases
+
+**For users, today:**
 
 - **Use any DeFi protocol with only a Solana wallet and SOL.** Lend on Aave,
   trade on Uniswap, provide liquidity, claim airdrops, mint NFTs, on any
   EVM chain, with one Phantom approval each. The demo does the first two.
-- **Cross-chain treasury from one signing policy.** A Solana multisig or DAO
-  owns addresses on every chain. One approval flow, one audit trail, no
-  per-chain custody.
-- **Bridge-free settlement.** Two parties on different chains settle without
-  locking funds in a bridge contract: the Solana side signs the release on
-  the other chain directly.
-- **Intents.** A Solana program can hold foreign assets and release them
-  only when an on-chain condition is met, which is the building block for
-  cross-chain intents, escrow and atomic swaps.
 - **Wallets and apps with a single seed.** A Solana wallet can present a
   Bitcoin or Ethereum balance and let the user act on it, without adding a
   chain to the wallet.
+
+**For programs, which is where it gets interesting:**
+
+- **A vault that hedges on another venue at 3am.** A Solana vault holds SOL
+  and needs a short ETH perp on an Ethereum-side venue when the price moves.
+  Today either a human wakes up or a custodian's key signs. With SODA the
+  vault program requests the signature by CPI. The PDA *is* the account on
+  the other venue.
+- **AI agents with their own cross-chain identity.** An agent that lives as
+  a Solana program gets a Bitcoin and an Ethereum address from the same
+  seeds. It can settle, rebalance and pay invoices on those chains without
+  a Turnkey or Privy key behind it.
+- **A non-custodial wrapped-BTC, by anyone.** Deposit BTC to an address a
+  Solana PDA owns, mint a receipt token, burn to redeem and the program
+  signs the BTC spend back. No BitGo, no Coinbase, no closed federation.
+  Zeus ships one of these; SODA lets anyone ship one.
+- **Composition in one Solana transaction.** Swap on Jupiter, hedge on an
+  Ethereum venue, pay a Bitcoin invoice, in one slot, reverting as a unit
+  if any leg fails. Bridges cannot compose like this because they need
+  finality on both sides between steps.
+- **Cross-chain treasury from one signing policy.** A Solana multisig or DAO
+  owns addresses on every chain. One approval flow, one audit trail, no
+  per-chain custody.
+- **Intents and escrow.** A program holds a foreign asset and releases it
+  only when an on-chain condition is met.
 
 ## For institutions
 
@@ -225,6 +259,36 @@ signature regardless".
   required to run in attested TEEs, be bonded via restaking, and be
   geographically and legally diverse. Threshold and operator set are
   on-chain parameters, not promises.
+
+## Why now, and how big
+
+- **Solana is being pitched as the venue for every asset**, and that thesis
+  needs a way for Solana to act on other chains that is not a bridge.
+- **The custodial model is losing money in production.** cbBTC is a
+  ~$6.3B market held by one corporation. zBTC, the closed-federation
+  alternative, is ~$14M after 18 months. In April 2026 Drift lost
+  $4.4M of wBTC and $590K of zBTC in one incident.
+- **The demand is proven elsewhere.** NEAR chain signatures signed over
+  $500M of transaction volume in 2025. Cubist secures Lombard's $2B of
+  BTC with centralised programmatic signing. SODA is the on-chain,
+  permissionless version of that category.
+- **Agents need it.** Every AI-agent framework on Solana today assumes a
+  SaaS custodian for non-Solana chains.
+
+The market SODA displaces is the bridge and wrapped-asset market, roughly
+$15B of TVL. The business model is Wormhole's, with a larger surface:
+signatures are a superset of messages.
+
+## Compared with the alternatives
+
+| | What it is | Why it is not SODA |
+|---|---|---|
+| **Wormhole, LayerZero, deBridge** | Message bridges | They pass notes between chains. SODA passes authority. The other chain never learns Solana exists. |
+| **cbBTC, wBTC** | Wrapped assets | One corporation holds the real BTC. SODA holds nothing centrally; each address is owned by a Solana account. |
+| **Zeus (zBTC)** | One wrapped-BTC product on a private MPC | Zeus is a product. SODA is the primitive underneath it, open to anyone. Zeus is USDC; SODA is ERC-20. |
+| **Ika** | 2PC-MPC wallets, the user holds one share | A user share on every signature means wallets only. A Solana PDA cannot hold a user share. Ika is wallets that touch every chain; SODA is programs that own every chain. |
+| **Turnkey, Privy, Cubist** | Hosted signing SaaS | Centralised and closed. Proves the category; SODA is the on-chain, permissionless version. |
+| **NEAR chain signatures** | The same primitive, on NEAR | See below. |
 
 ## Compared with NEAR chain signatures
 
@@ -249,19 +313,39 @@ set and maturity, which is what the roadmap below is about.
 
 ## Business model
 
-SODA is infrastructure. It is paid for the way relayers and RPC providers
-are paid, per use, in SOL:
+SODA is infrastructure, paid per use in SOL. Every `request_signature`
+carries a fee with three parts:
 
-- **Per-signature fee.** Each request carries a small fee that pays the
-  committee operators and the relayer. Priced in SOL, deducted at request
-  time, so the user never needs another token.
-- **Gas spread.** The relayer fronts destination-chain gas and charges it
-  back in SOL with a margin.
-- **Institutional plan.** Dedicated committee with a chosen operator set,
-  TEE attestation, SLAs, and an SDK for integrating the signing policy the
-  institution already runs.
-- **Protocol integrations.** Wallets and dApps embed the SDK; the fee is
-  shared with the integrator.
+| Component | Pays for | Goes to |
+|---|---|---|
+| Base signing fee | The committee's work to produce the signature | Participating operators |
+| Priority fee | Faster turnaround under load | Operators who respond first |
+| Protocol fee | Development and treasury | SODA treasury |
+
+Destination-chain gas is fronted by the relayer and charged back in SOL
+with a margin, so the user never holds another token.
+
+Illustrative numbers at a 5 bps fee with an 80/20 operator/treasury split:
+
+| Daily signed volume | Committee fees per day | Effect |
+|---|---|---|
+| $10M | ~$4k | A small committee is viable |
+| $100M | ~$40k | Operator yield beats market; more restakers join |
+| $1B | ~$400k | Committee expands until yield returns to market rate |
+
+This is the flywheel that makes security scale with value. A threshold
+committee is only as safe as the stake behind it: slashable bond has to
+exceed the value it protects, the same constraint every proof-of-stake
+system carries. As signing volume grows, fees grow, operator yield rises,
+more restaked operators opt in, and the committee grows with the TVL it
+secures. If TVL outruns operator adoption, the levers are a dynamic fee, a
+TVL cap per epoch at launch, and dedicated larger committees for
+high-value flows.
+
+On top of the protocol fee: an **institutional plan** (dedicated committee,
+chosen operator set, TEE attestation, SLAs, SDK integration with the
+institution's existing signing policy) and **revenue share** with wallets
+and dApps that embed the SDK.
 
 ## Roadmap, next three months
 
