@@ -41,10 +41,12 @@ const WalletMultiButton = dynamic(
   { ssr: false },
 );
 
-// Display only — the browser never calls this; /api/finalize does the signing
-// server-side. Empty by default: the old hardcoded AWS address is long dead,
-// and a stale default made the UI claim a committee that was not reachable.
-const MPC_COORDINATOR = process.env.NEXT_PUBLIC_MPC_COORDINATOR_URL ?? "";
+// The signing backend is reported by /api/group-pk from the SERVER's env, not
+// read from a NEXT_PUBLIC_* copy. The copy drifted: a deployment kept
+// advertising a coordinator host that had been decommissioned for months.
+type SignerInfo =
+  | { mode: "mpc"; coordinator: string }
+  | { mode: "dev-key"; source: "env" | "file" | "missing" };
 
 const DOCS_URL =
   process.env.NEXT_PUBLIC_DOCS_URL ?? "https://frontier-docs-cazz.vercel.app";
@@ -151,6 +153,12 @@ export default function Home() {
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signer, setSigner] = useState<SignerInfo | null>(null);
+  // Set when the server's chain differs from the one this bundle was built
+  // for. Blocks the demo: proceeding would fund on one chain and broadcast
+  // on another.
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   const { publicKey: walletPubkey, connected } = useWallet();
   const anchorWallet = useAnchorWallet();
@@ -160,10 +168,34 @@ export default function Home() {
   useEffect(() => {
     fetch("/api/group-pk")
       .then((r) => r.json())
-      .then((d: { groupPkHex?: string; error?: string }) => {
-        if (d.groupPkHex) setGroupPkHex(d.groupPkHex);
-        else if (d.error) setError(d.error);
-      })
+      .then(
+        (d: {
+          groupPkHex?: string;
+          chain?: string;
+          signer?: SignerInfo;
+          error?: string;
+        }) => {
+          if (d.groupPkHex) setGroupPkHex(d.groupPkHex);
+          else if (d.error) setError(d.error);
+          if (d.signer) setSigner(d.signer);
+          if (d.chain && d.chain !== CHAIN.key) {
+            setConfigError(
+              `This page was built for ${CHAIN.name} (NEXT_PUBLIC_DEMO_CHAIN=` +
+                `${CHAIN.key}) but the server is configured for "${d.chain}". ` +
+                `Set both to the same chain and redeploy.`,
+            );
+          } else if (
+            d.signer?.mode === "dev-key" &&
+            d.signer.source === "missing"
+          ) {
+            setConfigError(
+              "The server has no signer key: neither SODA_SIGNER_KEY_HEX nor " +
+                "keyshare.dev.json is present, so /api/finalize cannot sign. " +
+                "On Vercel, set SODA_SIGNER_KEY_HEX to the committee's key.",
+            );
+          }
+        },
+      )
       .catch((e) => setError(`Could not load dev signer key: ${(e as Error).message}`));
   }, []);
 
@@ -176,6 +208,7 @@ export default function Home() {
   useEffect(() => {
     setEthAddress(null);
     setBalance(null);
+    setBalanceError(null);
     setResult(null);
     setSignedHex(null);
     setTimeline(INITIAL_TIMELINE);
@@ -214,12 +247,24 @@ export default function Home() {
     const tick = async () => {
       try {
         const b = await sepolia.getBalance(ethAddress);
-        if (!cancelled) setBalance(b);
+        if (!cancelled) {
+          setBalance(b);
+          setBalanceError(null);
+        }
       } catch (e) {
-        // Log instead of swallowing — a stuck "—" balance with no console
-        // signal makes Vercel misconfig invisible.
+        // Show it on the card. A stuck "—" with the reason only in the
+        // console made an RPC misconfiguration look like a derivation bug.
         // eslint-disable-next-line no-console
-        console.warn("[soda] Sepolia balance fetch failed:", e);
+        console.warn("[soda] balance fetch failed:", e);
+        if (!cancelled) {
+          let host = EVM_RPC;
+          try {
+            host = new URL(EVM_RPC).host;
+          } catch {
+            /* keep raw */
+          }
+          setBalanceError(`${host}: ${(e as Error).message}`);
+        }
       }
     };
     tick();
@@ -264,6 +309,7 @@ export default function Home() {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            chain: CHAIN.key,
             address: ethAddress,
             minWei: requiredWei.toString(),
           }),
@@ -395,6 +441,7 @@ export default function Home() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          chain: CHAIN.key,
           sigRequestPda: sigRequestPda.toBase58(),
           // `to` and `data` must be exactly what was committed on-chain;
           // /api/finalize re-encodes and refuses on a payload mismatch.
@@ -450,7 +497,7 @@ export default function Home() {
   // Funding is not a gate: an unfunded address is topped up from the sponsor
   // key on click. Blocking on balance just produced a dead button whenever the
   // derivation changed, since every new owner starts at zero.
-  const buttonDisabled = !connected || !ethAddress;
+  const buttonDisabled = !connected || !ethAddress || !!configError;
 
   // Three explicit steps. Each is complete only when its own artifact exists,
   // so the stepper reflects real state rather than a counter we increment.
@@ -499,6 +546,13 @@ export default function Home() {
           </p>
         </div>
 
+        {configError ? (
+          <div className="rounded-lg border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">
+            <div className="font-medium">Deployment misconfigured</div>
+            <div className="mt-1 text-rose-200/80">{configError}</div>
+          </div>
+        ) : null}
+
         {/* Every step renders always. A locked step stays visible and dimmed so
             the audience can see the whole path up front instead of watching
             cards appear one at a time. */}
@@ -542,6 +596,7 @@ export default function Home() {
                     ethAddress={ethAddress}
                     sepoliaBalanceWei={balance}
                     loading={false}
+                    balanceError={balanceError}
                   />
                   <p className="mt-3 text-xs text-zinc-500">
                     This is a pure function of your wallet:{" "}
@@ -563,7 +618,7 @@ export default function Home() {
                   </p>
                   <button
                     type="button"
-                    disabled={!groupPkHex}
+                    disabled={!groupPkHex || !!configError}
                     onClick={onDerive}
                     className="mt-4 w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"
                   >
@@ -721,16 +776,18 @@ export default function Home() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
             </span>
-            {MPC_COORDINATOR
-              ? "MPC committee · 2-of-2 Lindell '17 ECDSA"
-              : "Signer · v0 single key (server-side)"}
+            {signer === null
+              ? "Signer · loading…"
+              : signer.mode === "mpc"
+                ? "MPC committee · 2-of-2 Lindell '17 ECDSA"
+                : "Signer · v0 single key (server-side)"}
           </div>
           <div className="mt-2 grid gap-1 text-sm font-mono text-emerald-200/80">
-            {MPC_COORDINATOR ? (
+            {signer?.mode === "mpc" ? (
               <>
                 <div>node P1 · share x1</div>
                 <div>node P2 · share x2</div>
-                <div>coordinator · {MPC_COORDINATOR}</div>
+                <div>coordinator · {signer.coordinator}</div>
                 <div className="pt-1 text-xs text-emerald-300/60">
                   Neither node holds the joint secret. Signing runs the
                   4-message Lindell &apos;17 protocol; the on-chain{" "}
@@ -739,7 +796,14 @@ export default function Home() {
               </>
             ) : (
               <>
-                <div>key · keyshare.dev.json (one key, on the server)</div>
+                <div>
+                  key ·{" "}
+                  {signer?.mode === "dev-key" && signer.source === "env"
+                    ? "SODA_SIGNER_KEY_HEX (one key, in the server's env)"
+                    : signer?.mode === "dev-key" && signer.source === "missing"
+                      ? "MISSING — no SODA_SIGNER_KEY_HEX and no keyshare.dev.json"
+                      : "keyshare.dev.json (one key, on the server)"}
+                </div>
                 <div className="pt-1 text-xs text-emerald-300/60">
                   The derived address above comes from{" "}
                   <em>your connected wallet</em>:{" "}

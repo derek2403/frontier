@@ -12,6 +12,8 @@ type Props = {
   ethAddress: string | null;
   sepoliaBalanceWei: bigint | null;
   loading?: boolean;
+  /** Why the balance could not be read, if it could not. */
+  balanceError?: string | null;
 };
 
 function formatEth(wei: bigint | null): string {
@@ -20,7 +22,12 @@ function formatEth(wei: bigint | null): string {
   return `${eth.toFixed(6)} ETH`;
 }
 
-export default function DerivedAddressCard({ ethAddress, sepoliaBalanceWei, loading }: Props) {
+export default function DerivedAddressCard({
+  ethAddress,
+  sepoliaBalanceWei,
+  loading,
+  balanceError,
+}: Props) {
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-100">
       <div className="text-xs uppercase tracking-wider text-zinc-500">
@@ -36,6 +43,11 @@ export default function DerivedAddressCard({ ethAddress, sepoliaBalanceWei, load
             {CHAIN.name} balance
           </div>
           <div className="mt-1 font-mono">{formatEth(sepoliaBalanceWei)}</div>
+          {sepoliaBalanceWei === null && balanceError ? (
+            <div className="mt-1 break-all text-xs text-rose-300/80">
+              {balanceError}
+            </div>
+          ) : null}
         </div>
         <div>
           <div className="text-xs uppercase tracking-wider text-zinc-500">Chain</div>

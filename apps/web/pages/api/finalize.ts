@@ -22,7 +22,6 @@ import {
   bytesToBigInt,
   chainRpcUrl,
   computeTweak,
-  getChain,
   eip155V,
   encodeSignedLegacy,
   encodeUnsignedLegacy,
@@ -34,35 +33,64 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { sodaIdl } from "@/lib/idls";
+import { chainMismatch, serverChain } from "@/lib/chain";
 
 const REPO_ROOT = resolve(process.cwd(), "../..");
 const LAST_TX_PATH = resolve(REPO_ROOT, ".last-tx-hash");
 const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
 
 /**
- * The v0 single-key signer, shared with apps/demo and lib/run-demo.ts so all
- * three derive the same addresses from the same committee key.
+ * The v0 single-key signer — the key whose pubkey is the on-chain
+ * Committee.group_pk. Same key apps/demo uses, so both surfaces derive the
+ * same addresses.
+ *
+ * Sources, in order:
+ *   1. SODA_SIGNER_KEY_HEX — 32-byte hex. The only option on Vercel or any
+ *      other serverless host, where ../../keyshare.dev.json does not exist.
+ *   2. keyshare.dev.json at the repo root — local `pnpm dev`.
+ *
+ * This deliberately does NOT generate a key when neither is present, unlike
+ * apps/demo (which may be initialising a fresh committee). By the time this
+ * route runs, the committee already exists on-chain with a fixed group_pk;
+ * a fresh random key can never match it, so generating one just moves the
+ * failure to a PubkeyMismatch two steps later, with no hint of the cause.
  */
-function loadOrCreateSignerKey(): Uint8Array {
+function loadSignerKey(): Uint8Array {
+  const fromEnv = (process.env.SODA_SIGNER_KEY_HEX ?? "")
+    .trim()
+    .replace(/^0x/, "");
+  if (fromEnv) {
+    if (!/^[0-9a-fA-F]{64}$/.test(fromEnv)) {
+      throw new Error("SODA_SIGNER_KEY_HEX is set but is not 32 bytes of hex");
+    }
+    return Uint8Array.from(Buffer.from(fromEnv, "hex"));
+  }
   if (existsSync(SIGNER_KEY_PATH)) {
     return Uint8Array.from(
       Buffer.from(readFileSync(SIGNER_KEY_PATH, "utf8").trim(), "hex"),
     );
   }
-  const sk = secp256k1.utils.randomPrivateKey();
-  writeFileSync(SIGNER_KEY_PATH, Buffer.from(sk).toString("hex"), {
-    mode: 0o600,
-  });
-  return sk;
+  throw new Error(
+    `no signer key: set SODA_SIGNER_KEY_HEX (required on Vercel) or put the ` +
+      `committee's key at ${SIGNER_KEY_PATH}. It must be the key whose pubkey ` +
+      `is the on-chain Committee.group_pk.`,
+  );
 }
 
-// Same DEMO_CHAIN the CLI uses. The chain id goes into the EIP-155 RLP that
-// this route re-encodes, and the payload-recompute guard below fails loudly
-// if it disagrees with what the browser committed on-chain.
-const CHAIN = getChain(process.env.DEMO_CHAIN);
+// Same chain the browser was built for (see lib/chain.ts). The chain id goes
+// into the EIP-155 RLP that this route re-encodes, and the payload-recompute
+// guard below fails loudly if it disagrees with what the browser committed
+// on-chain.
+const CHAIN = serverChain();
 const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 
+// A dead coordinator host must surface as an error, not as a request that
+// sits until the platform's function timeout kills it with no message.
+const MPC_TIMEOUT_MS = 90_000;
+
 type FinalizeReq = {
+  /** Chain key the page was built for; refused if it is not the server's. */
+  chain?: string;
   /** Base58 PublicKey of the SigRequest PDA created by sign_eth_transfer */
   sigRequestPda: string;
   /** Hex (no 0x prefix), 20 bytes */
@@ -138,6 +166,8 @@ export default async function handler(
 
   try {
     const body = req.body as FinalizeReq;
+    const mismatch = chainMismatch(body.chain, CHAIN);
+    if (mismatch) return res.status(400).json({ error: mismatch });
     if (
       !body.sigRequestPda ||
       !body.recipientHex ||
@@ -240,15 +270,25 @@ export default async function handler(
 
     if (MPC_URL) {
       const MPC_TOKEN = process.env.MPC_COORDINATOR_TOKEN;
-      const mpcRes = await fetch(`${MPC_URL}/sign`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
-        },
-        // Name the on-chain request; the nodes derive payload + tweak from it.
-        body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
-      });
+      let mpcRes: Response;
+      try {
+        mpcRes = await fetch(`${MPC_URL}/sign`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
+          },
+          // Name the on-chain request; the nodes derive payload + tweak from it.
+          body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
+          signal: AbortSignal.timeout(MPC_TIMEOUT_MS),
+        });
+      } catch (e) {
+        throw new Error(
+          `mpc coordinator at ${MPC_URL} unreachable (${(e as Error).name}: ` +
+            `${(e as Error).message}). If this host is decommissioned, unset ` +
+            `MPC_COORDINATOR_URL to use the single-key signer.`,
+        );
+      }
       if (!mpcRes.ok) {
         throw new Error(`mpc coordinator ${mpcRes.status}: ${await mpcRes.text()}`);
       }
@@ -266,7 +306,36 @@ export default async function handler(
         Uint8Array.from(sigRequest.derivationSeeds),
         Uint8Array.from(sigRequest.chainTag),
       );
-      const devSk = loadOrCreateSignerKey();
+      const devSk = loadSignerKey();
+
+      // Check the key against the on-chain committee BEFORE signing. A wrong
+      // key otherwise fails inside finalize_signature as PubkeyMismatch,
+      // which reads like a derivation bug rather than what it is: this
+      // server holds a different key from the one init_committee registered.
+      const [committeePda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("committee")],
+        sodaProgram.programId,
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const committee = await (sodaProgram.account as any).committee.fetch(
+        committeePda,
+      );
+      const onChainPk = Buffer.from(
+        Uint8Array.from(committee.groupPk ?? committee.group_pk),
+      ).toString("hex");
+      const serverPk = Buffer.from(secp256k1.getPublicKey(devSk, true)).toString(
+        "hex",
+      );
+      if (onChainPk !== serverPk) {
+        throw new Error(
+          `server signer key does not match the on-chain committee: ` +
+            `Committee.group_pk is ${onChainPk.slice(0, 12)}… but this ` +
+            `server's key gives ${serverPk.slice(0, 12)}…. Set ` +
+            `SODA_SIGNER_KEY_HEX to the key that initialised the committee ` +
+            `(the laptop's keyshare.dev.json), or run update_committee.`,
+        );
+      }
+
       const tweakedSkBig =
         (bytesToBigInt(devSk) + bytesToBigInt(tweak)) % secp256k1.CURVE.n;
       if (tweakedSkBig === 0n) throw new Error("tweaked sk is zero");

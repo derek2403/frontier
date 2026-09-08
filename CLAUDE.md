@@ -557,6 +557,37 @@ bash scripts/deploy-mpc-aws.sh
   console edits (see "Security group rules added"). Worth scripting via AWS CLI
   next time.
 
+## Web demo on Vercel — added 2026-09-09
+
+`apps/web` auto-deploys to the Vercel project `frontier-web` on every push
+to `main` (GitHub integration; no `vercel.json`, no CLI on the laptop). The
+docs page `apps/docs/pages/deploy/vercel-web.mdx` lists the env vars;
+`apps/web/.env.example` is the canonical commented list.
+
+What broke on 2026-09-08 and what now guards against it:
+
+- **Chain was split across two variables.** Browser read
+  `NEXT_PUBLIC_DEMO_CHAIN`, API routes read `DEMO_CHAIN`. Now
+  `apps/web/lib/chain.ts` makes the server fall back to the public one, the
+  browser sends `chain` on every API call and the server 400s on a mismatch,
+  and `/api/group-pk` reports the server chain so the page shows a
+  "Deployment misconfigured" banner at load.
+- **Signing backend was advertised from a `NEXT_PUBLIC_` copy** that still
+  pointed at the dead AWS coordinator. Removed; `/api/group-pk` now reports
+  `signer` from the server's real `MPC_COORDINATOR_URL`.
+- **`/api/finalize` needed `keyshare.dev.json` on disk** and silently
+  generated a random key when it was missing — guaranteed `PubkeyMismatch`
+  on Vercel. Now: `SODA_SIGNER_KEY_HEX` env first, file second, hard error
+  third, and the route checks the key's pubkey against the on-chain
+  `Committee.group_pk` before signing.
+- **A dead `MPC_COORDINATOR_URL` hung until the function timeout.** The
+  fetch now has a 90s `AbortSignal.timeout` and names the host in the error.
+
+Local `apps/web/.env` and root `.env` are on `DEMO_CHAIN=base-sepolia`: the
+Alchemy app the user has only serves Base Sepolia + Solana devnet, not
+Ethereum Sepolia. On-chain committee `group_pk` (`02062edf…`) matches the
+laptop's `keyshare.dev.json`; authority is the laptop wallet `D5pwjGzq…`.
+
 ## Render MPC deployment — added 2026-09-05
 
 Second deployment target for the same three services, alongside AWS. Free

@@ -1,0 +1,93 @@
+---
+title: Deploy the web demo to Vercel
+description: Environment variables the SODA web demo needs on Vercel, and the three ways a half-configured deployment fails.
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Deploy the web demo to Vercel
+
+The web app in `apps/web` runs the whole pipeline: Phantom signs
+`sign_eth_transfer`, then `/api/finalize` signs the payload, submits
+`finalize_signature` and broadcasts the EVM transaction. On a laptop the
+API routes read two key files from disk. On Vercel there is no disk, so
+both keys go in as environment variables.
+
+<Callout type="warning">
+  `NEXT_PUBLIC_*` variables are inlined into the browser bundle **at build
+  time**. Changing one in the Vercel dashboard does nothing until you
+  redeploy.
+</Callout>
+
+## Environment variables
+
+Set these on the Vercel project (Settings → Environment Variables). The
+canonical list with comments is `apps/web/.env.example`.
+
+| Variable | Browser or server | Value |
+|---|---|---|
+| `NEXT_PUBLIC_DEMO_CHAIN` | browser | `base-sepolia` (or `sepolia`) |
+| `DEMO_CHAIN` | server | same value; may be omitted, the server then uses the public one |
+| `NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL` | browser | an RPC that serves Base Sepolia |
+| `BASE_SEPOLIA_RPC_URL` | server | same |
+| `NEXT_PUBLIC_SOLANA_RPC_URL` | browser | `https://api.devnet.solana.com` |
+| `SOLANA_RPC_URL` | server | `https://api.devnet.solana.com` |
+| `ANCHOR_WALLET_JSON` | server | contents of `~/.config/solana/id.json`, the 64-number array |
+| `SODA_SIGNER_KEY_HEX` | server | contents of `keyshare.dev.json`, 32-byte hex |
+| `SEPOLIA_FUNDER_KEY` | server | sponsor key, funded on the chosen chain |
+
+For `sepolia` use `NEXT_PUBLIC_SEPOLIA_RPC_URL` and `SEPOLIA_RPC_URL`
+instead of the Base pair.
+
+Do **not** set `MPC_COORDINATOR_URL`. The committee cannot apply the
+per-owner derivation tweak yet and its key is not the one on-chain, so
+every signature it produces is rejected. The page shows which signer the
+server is actually using; there is no separate display variable to keep in
+sync.
+
+## How a half-configured deployment fails
+
+The page checks its configuration at load and refuses to run rather than
+failing two steps later with a misleading error. These are the checks and
+what each one means.
+
+<Steps>
+### "Deployment misconfigured: built for X, server configured for Y"
+
+`NEXT_PUBLIC_DEMO_CHAIN` and `DEMO_CHAIN` differ. The browser would derive
+an address and build a transaction for one chain while the server funds
+and broadcasts on another. Set both to the same value and redeploy.
+
+### "… is not enabled for this app"
+
+An Alchemy URL whose app does not have that network switched on. Either
+enable the network on the app, or point the variable at a provider that
+serves it. The error names the chain and host it came from.
+
+### "no signer key: set SODA_SIGNER_KEY_HEX"
+
+`/api/finalize` found neither the variable nor `keyshare.dev.json`. It
+will not generate a key: the committee already exists on-chain with a
+fixed `group_pk`, so a fresh key could never match it.
+
+### "server signer key does not match the on-chain committee"
+
+`SODA_SIGNER_KEY_HEX` is set but is not the key that ran
+`init_committee`. Copy the laptop's `keyshare.dev.json`, or run
+`update_committee` with the committee authority to rotate the on-chain key
+to the one the server holds.
+</Steps>
+
+## Solana RPC and websockets
+
+Both the browser and `/api/finalize` confirm transactions by
+`signatureSubscribe` over websocket. Alchemy's Solana endpoint rejects that
+method, so a page pointed at it hangs on confirmation even though the
+transaction landed. Use the public devnet endpoint for both Solana
+variables, or a provider that supports subscriptions.
+
+<Callout type="info">
+  The two server keys are demo secrets. `SODA_SIGNER_KEY_HEX` controls every
+  address the committee has ever derived, and `SEPOLIA_FUNDER_KEY` is a hot
+  wallet. Keep only test funds behind them.
+</Callout>

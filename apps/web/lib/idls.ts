@@ -12,5 +12,3 @@ export { sodaIdl, ethDemoIdl };
 
 export const SODA_PROGRAM_ID: string = (sodaIdl as { address: string }).address;
 export const ETH_DEMO_PROGRAM_ID: string = (ethDemoIdl as { address: string }).address;
-
-export const SEPOLIA_CHAIN_ID = 11_155_111n;
