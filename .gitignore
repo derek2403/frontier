@@ -44,3 +44,7 @@ Thumbs.db
 
 # Demo state
 .last-tx-hash
+
+# MPC signing shares
+apps/mpc-node/shares/
+share-p*.json

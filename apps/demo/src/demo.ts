@@ -175,9 +175,16 @@ async function main() {
   }
 
   // --- 2. Derive ETH address ---
+  // The tweak is keyed on the OWNER (the signer), matching what the program
+  // now computes on-chain. `derivationSeeds` is the path: it lets one owner
+  // hold several foreign addresses. Empty = the owner's default account.
+  //
+  // This mirrors NEAR: tweak = H(domain, predecessor_account, path). The
+  // owner slot used to hold the eth_demo program id and the path slot was
+  // empty, which is why every caller landed on the same address.
   const derivationSeeds = new Uint8Array(0);
   const tweak = computeTweak(
-    ethDemoProgram.programId.toBytes(),
+    walletKp.publicKey.toBytes(),
     derivationSeeds,
     ETH_SEPOLIA_CHAIN_TAG,
   );
@@ -269,7 +276,6 @@ async function main() {
   console.log("\n[1/3] eth_demo::sign_eth_transfer  (Solana program builds RLP, CPIs SODA)");
   const signTxSig = await (ethDemoProgram.methods as any)
     .signEthTransfer(
-      Array.from(foreignPkXy),
       Array.from(recipient),
       Array.from(valueWeiBe),
       new BN(nonce.toString()),
@@ -301,10 +307,8 @@ async function main() {
         "content-type": "application/json",
         ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
       },
-      body: JSON.stringify({
-        payloadHex: Buffer.from(payload).toString("hex"),
-        tweakHex: Buffer.from(tweak).toString("hex"),
-      }),
+      // The committee reads the request from chain itself; we only name it.
+      body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
     });
     if (!res.ok) {
       throw new Error(`mpc coordinator ${res.status}: ${await res.text()}`);
@@ -322,6 +326,22 @@ async function main() {
     const sig = secp256k1.sign(payload, tweakedSk, { lowS: true });
     sigBytes = sig.toCompactRawBytes();
     recoveryId = sig.recovery!;
+  }
+
+  // Local mirror of the on-chain check: recover from (payload, sig, recovery_id)
+  // and compare to the foreign_pk we committed to. If this disagrees, the bug is
+  // off-chain and we can say so before burning a transaction.
+  {
+    const recPt = secp256k1.Signature.fromCompact(sigBytes)
+      .addRecoveryBit(recoveryId)
+      .recoverPublicKey(payload);
+    const recXy = recPt.toRawBytes(false).subarray(1);
+    const ok = Buffer.from(recXy).equals(Buffer.from(foreignPkXy));
+    console.log(`      local recover check: ${ok ? "MATCH" : "MISMATCH"}`);
+    if (!ok) {
+      console.log(`        recovered:   ${bytesToHex(recXy).slice(0, 34)}…`);
+      console.log(`        foreign_pk:  ${bytesToHex(foreignPkXy).slice(0, 34)}…`);
+    }
   }
 
   // --- 7. Solana: soda::finalize_signature (on-chain secp256k1_recover) ---

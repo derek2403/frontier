@@ -20,4 +20,6 @@ pub enum SodaError {
     DerivationFailed,
     #[msg("secp256k1_recover failed")]
     RecoverFailed,
+    #[msg("Unsupported signature domain (only 0 = secp256k1 ECDSA exists)")]
+    UnsupportedDomain,
 }

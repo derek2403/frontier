@@ -13,7 +13,8 @@
  * IDLs whose event field types are in `types`).
  */
 import { Connection, PublicKey, Keypair, TransactionInstruction, Transaction, SystemProgram } from '@solana/web3.js'
-import { computeTweak, deriveForeignPk } from '@soda-sdk/core'
+// Derivation now happens inside the mpc-node processes, which re-derive it
+// from on-chain state rather than trusting anything this subscriber computes.
 import { sha256 } from '@noble/hashes/sha2.js'
 import { request } from 'undici'
 import { existsSync, readFileSync } from 'node:fs'
@@ -185,27 +186,18 @@ async function handleSigRequested(
 ): Promise<void> {
   log(`${C.yellow}SigRequested${C.reset} sig_request=${ev.sigRequest.toBase58()} requester=${ev.requester.toBase58()}`)
 
-  // Compute the SODA tweak from the event fields. requester + seeds + chain_tag
-  // are exactly what `soda-sdk`'s `computeTweak` consumes.
-  const tweak = computeTweak(
-    ev.requester.toBytes(),
-    ev.derivationSeeds,
-    ev.chainTag,
-  )
-
-  // Sanity-check: derived foreign_pk must equal the one stored in the request.
-  const expectedForeignPk = deriveForeignPk(groupPkCompressed, tweak)
-  // foreignPk is 65 bytes (0x04 || X || Y); the on-chain copy is 64 bytes (X || Y).
-  const expectedXY = expectedForeignPk.subarray(1)
-  if (!bytesEq(expectedXY, ev.foreignPkXY)) {
-    log(`${C.red}foreign_pk mismatch — refusing to sign${C.reset}`)
-    return
-  }
-
-  // Drive the MPC coordinator.
-  const tweakHex = Buffer.from(tweak).toString('hex')
-  const payloadHex = Buffer.from(ev.payload).toString('hex')
-  const sigResp = await postJson(`${COORDINATOR_URL}/sign`, { payloadHex, tweakHex })
+  // The subscriber no longer computes the tweak or forwards a payload. It is
+  // an untrusted trigger: it just tells the committee which on-chain request
+  // to look at. Each node reads that account from its own RPC and re-derives
+  // the payload and tweak itself, so a compromised subscriber cannot obtain a
+  // signature over anything the chain did not authorize.
+  //
+  // This also retires a real bug: the check that used to live here keyed the
+  // tweak on `ev.requester` (the signing wallet) while the SDK keys it on the
+  // requesting *program* id, so it rejected every legitimate eth_demo request.
+  const sigResp = await postJson(`${COORDINATOR_URL}/sign`, {
+    sigRequestPubkey: ev.sigRequest.toBase58(),
+  })
   if (!sigResp.r || !sigResp.s || sigResp.v == null) {
     log(`${C.red}coordinator returned no sig:${C.reset} ${JSON.stringify(sigResp)}`)
     return

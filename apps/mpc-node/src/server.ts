@@ -22,6 +22,7 @@ import BN from 'bn.js'
 import { timingSafeEqual } from 'node:crypto'
 import { loadShare, type Role } from './share.js'
 import { setSession, getSession, dropSession } from './sessions.js'
+import { authorize, AUTHORIZATION_ENABLED } from './authorize.js'
 
 const { TPCEcdsaSign } = pkg
 
@@ -78,29 +79,41 @@ app.get('/health', async () => ({
  * P1 starts a session. Returns the first outgoing message; coordinator
  * forwards it to P2.
  *
- * The optional `tweakHex` is the SODA derivation tweak: P1 adds it to its
- * share before signing, so the resulting signature recovers to
- * `group_pk + tweak * G` (the SODA-derived foreign address).
+ * The caller supplies ONLY a SigRequest account address. This node reads that
+ * account from its own Solana RPC and derives the payload and tweak from what
+ * the chain says — so it can only ever sign something a confirmed on-chain
+ * request already committed to. There is deliberately no raw-payload path.
  */
 app.post<{
-  Body: { sessionId: string; payloadHex: string; tweakHex?: string }
+  Body: { sessionId: string; sigRequestPubkey: string }
 }>('/sign/init', async (req, reply) => {
   if (ROLE !== 'p1') {
     return reply.code(400).send({ error: 'only P1 starts a session' })
   }
-  const { sessionId, payloadHex, tweakHex } = req.body
-  if (!/^[0-9a-fA-F]{64}$/.test(payloadHex)) {
-    return reply.code(400).send({ error: 'payloadHex must be 32 bytes hex' })
+  const { sessionId, sigRequestPubkey } = req.body
+  if (typeof sigRequestPubkey !== 'string' || !sigRequestPubkey) {
+    return reply.code(400).send({ error: 'sigRequestPubkey is required' })
   }
 
-  const m = new BN(payloadHex, 16)
-  let shareJson = share.share
-  if (tweakHex) {
-    if (!/^[0-9a-fA-F]{64}$/.test(tweakHex)) {
-      return reply.code(400).send({ error: 'tweakHex must be 32 bytes hex' })
-    }
-    shareJson = applyTweakP1(share.share, tweakHex)
+  let authorized
+  try {
+    authorized = await authorize(sigRequestPubkey, compressedGroupPk())
+  } catch (err) {
+    app.log.warn(
+      { sigRequestPubkey, reason: (err as Error).message },
+      'refused to sign: request failed on-chain authorization',
+    )
+    return reply.code(403).send({ error: (err as Error).message })
   }
+
+  const m = new BN(authorized.payloadHex, 16)
+  // NOTE: applyTweakP1 was removed — it was a verified no-op. Safeheron shares
+  // the key multiplicatively (Q = x1*x2*G) and P2 holds a Paillier ciphertext
+  // of x1 fixed at DKG, so mutating P1's local x1 cannot change the output.
+  // The real fix is additive, applied on P2's side of message 4; until it
+  // lands, signatures recover to plain group_pk and finalize_signature will
+  // reject them. Authorization is still enforced above.
+  const shareJson = share.share
 
   const ctx = await TPCEcdsaSign.P1Context.createContext(
     JSON.stringify(shareJson),
@@ -117,32 +130,38 @@ app.post<{
  * step number we're at via the lib's internal expectedStep.
  */
 app.post<{
-  Body: { sessionId: string; messageBase64: string; payloadHex?: string; tweakHex?: string }
+  Body: { sessionId: string; messageBase64: string; sigRequestPubkey?: string }
 }>('/sign/step', async (req, reply) => {
-  const { sessionId, messageBase64, payloadHex, tweakHex } = req.body
+  const { sessionId, messageBase64, sigRequestPubkey } = req.body
   let ctx = getSession(sessionId)
 
   // P2's first call also bootstraps: it needs the payload to set up context.
+  // It re-authorizes independently rather than trusting P1 or the coordinator
+  // — that independence is the point of the check.
   if (!ctx) {
     if (ROLE !== 'p2') {
       return reply.code(404).send({ error: 'no such session' })
     }
-    if (!payloadHex || !/^[0-9a-fA-F]{64}$/.test(payloadHex)) {
+    if (!sigRequestPubkey) {
       return reply
         .code(400)
-        .send({ error: 'P2 first call needs payloadHex (32 bytes)' })
+        .send({ error: 'P2 first call needs sigRequestPubkey' })
     }
-    let shareJson = share.share
-    if (tweakHex) {
-      if (!/^[0-9a-fA-F]{64}$/.test(tweakHex)) {
-        return reply.code(400).send({ error: 'tweakHex must be 32 bytes hex' })
-      }
-      // Tweak is applied entirely to P1's share; P2 leaves its share alone.
-      // (The math: x1' = x1 + tweak, x2' = x2 → x1'+x2' = group_sk + tweak.)
+
+    let authorized
+    try {
+      authorized = await authorize(sigRequestPubkey, compressedGroupPk())
+    } catch (err) {
+      app.log.warn(
+        { sigRequestPubkey, reason: (err as Error).message },
+        'refused to sign: request failed on-chain authorization',
+      )
+      return reply.code(403).send({ error: (err as Error).message })
     }
-    const m = new BN(payloadHex, 16)
+
+    const m = new BN(authorized.payloadHex, 16)
     ctx = await TPCEcdsaSign.P2Context.createContext(
-      JSON.stringify(shareJson),
+      JSON.stringify(share.share),
       m,
     )
     setSession(sessionId, ctx)
@@ -203,11 +222,26 @@ app.post<{
 const BIND_HOST = process.env.MPC_BIND_HOST ?? '0.0.0.0'
 
 await app.listen({ host: BIND_HOST, port: PORT })
-app.log.info({ role: ROLE, port: PORT, authenticated: !!AUTH_TOKEN }, 'mpc-node ready')
+app.log.info(
+  {
+    role: ROLE,
+    port: PORT,
+    authenticated: !!AUTH_TOKEN,
+    onChainAuthorization: AUTHORIZATION_ENABLED,
+  },
+  'mpc-node ready',
+)
 if (!AUTH_TOKEN) {
   app.log.warn(
     'MPC_AUTH_TOKEN is not set — /sign is open to any caller. ' +
       'Set it on any host that has a public address.',
+  )
+}
+if (!AUTHORIZATION_ENABLED) {
+  app.log.error(
+    'SODA_PROGRAM_ID is not set — on-chain authorization is DISABLED and ' +
+      '/sign/* will refuse every request. Set SODA_PROGRAM_ID and ' +
+      'SODA_KNOWN_REQUESTERS so this node can verify requests against Solana.',
   )
 }
 
@@ -225,26 +259,13 @@ function bearerMatches(header: string | undefined): boolean {
 }
 
 /**
- * Apply SODA tweak to P1's share so the resulting signature recovers to
- * `group_pk + tweak * G` instead of `group_pk`. We add the tweak to x1
- * (mod n). x2 is unchanged because additive shares are linear in the secret.
+ * The committee's group public key in 33-byte compressed form, rebuilt from
+ * the X||Y stored alongside the share. Authorization needs it to re-derive
+ * `group_pk + tweak*G` and compare against what the chain stored.
  */
-function applyTweakP1(shareJson: object, tweakHex: string): object {
-  const obj = JSON.parse(JSON.stringify(shareJson)) as {
-    x1?: string
-    Q?: { x?: string; y?: string }
-  }
-  const N = new BN(
-    'fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141',
-    16,
-  )
-  const x1 = new BN(obj.x1 ?? '', 16)
-  const tweak = new BN(tweakHex, 16)
-  const x1Tweaked = x1.add(tweak).umod(N)
-  obj.x1 = x1Tweaked.toString(16)
-  // Q (group public point) is also tweaked; the coordinator passes the
-  // already-derived `foreign_pk` into the on-chain SigRequest, so we do
-  // NOT update Q on the share — the lib uses x1 to compute the partial sig
-  // and recovers consistently with the externally-tweaked Q.
-  return obj
+function compressedGroupPk(): Uint8Array {
+  const x = Buffer.from(share.groupPkXY.x.padStart(64, '0'), 'hex')
+  const y = Buffer.from(share.groupPkXY.y.padStart(64, '0'), 'hex')
+  const prefix = (y[y.length - 1] & 1) === 0 ? 0x02 : 0x03
+  return Uint8Array.from(Buffer.concat([Buffer.from([prefix]), x]))
 }

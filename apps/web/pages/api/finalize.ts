@@ -202,9 +202,8 @@ export default async function handler(
         "content-type": "application/json",
         ...(MPC_TOKEN ? { authorization: `Bearer ${MPC_TOKEN}` } : {}),
       },
-      body: JSON.stringify({
-        payloadHex: Buffer.from(payload).toString("hex"),
-      }),
+      // Name the on-chain request; the nodes derive payload + tweak from it.
+      body: JSON.stringify({ sigRequestPubkey: sigRequestPda.toBase58() }),
     });
     if (!mpcRes.ok) {
       throw new Error(`mpc coordinator ${mpcRes.status}: ${await mpcRes.text()}`);

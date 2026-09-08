@@ -5,7 +5,7 @@
  * tweak, drives the 4-message Lindell '17 protocol between two `mpc-node`
  * peers and returns the resulting ECDSA signature.
  *
- *   POST /sign { payloadHex, tweakHex? } → { r, s, v }
+ *   POST /sign { sigRequestPubkey } → { r, s, v }
  *
  * The coordinator never sees a secret share. It only forwards opaque
  * protocol messages between P1 and P2. Compromise of the coordinator =
@@ -99,19 +99,23 @@ app.get('/health', async () => {
   return { ok: true, peers: { p1, p2 } }
 })
 
+/**
+ * The coordinator no longer sees a payload or a tweak. It forwards only the
+ * SigRequest account address; each node independently reads that account from
+ * its own Solana RPC and derives what to sign. A compromised coordinator can
+ * therefore stall or misroute a session, but it cannot obtain a signature
+ * over anything the chain did not already authorize.
+ */
 app.post<{
-  Body: { payloadHex: string; tweakHex?: string }
+  Body: { sigRequestPubkey: string }
 }>('/sign', async (req, reply) => {
-  const { payloadHex, tweakHex } = req.body
-  if (!/^[0-9a-fA-F]{64}$/.test(payloadHex)) {
-    return reply.code(400).send({ error: 'payloadHex must be 32 bytes hex' })
-  }
-  if (tweakHex && !/^[0-9a-fA-F]{64}$/.test(tweakHex)) {
-    return reply.code(400).send({ error: 'tweakHex must be 32 bytes hex' })
+  const { sigRequestPubkey } = req.body
+  if (typeof sigRequestPubkey !== 'string' || !sigRequestPubkey) {
+    return reply.code(400).send({ error: 'sigRequestPubkey is required' })
   }
 
   const sessionId = randomUUID()
-  app.log.info({ sessionId, hasTweak: !!tweakHex }, 'starting signing session')
+  app.log.info({ sessionId, sigRequestPubkey }, 'starting signing session')
 
   if (PREWARM_PEERS) {
     await Promise.all([
@@ -123,17 +127,16 @@ app.post<{
   // Step 1: P1 starts → message1 outbound to P2.
   const init = await postJson(`${NODE_P1_URL}/sign/init`, {
     sessionId,
-    payloadHex,
-    tweakHex,
+    sigRequestPubkey,
   })
   let message: string = init.messageBase64
 
-  // Step 2: P2 receives msg1, returns msg2.
+  // Step 2: P2 receives msg1, returns msg2. It re-authorizes independently
+  // rather than trusting anything P1 or this coordinator asserted.
   const r2 = await postJson(`${NODE_P2_URL}/sign/step`, {
     sessionId,
     messageBase64: message,
-    payloadHex,
-    tweakHex,
+    sigRequestPubkey,
   })
   message = r2.messageBase64
 
