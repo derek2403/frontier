@@ -40,6 +40,12 @@ export default async function handler(
     // Layout: 8-byte Anchor discriminator + u8 bump + 32-byte authority
     // + 33-byte group_pk + u8 signer_count.
     const groupPk = acct.data.subarray(8 + 1 + 32, 8 + 1 + 32 + 33);
+    // Never cache. The committee key changes on update_committee, and a
+    // browser serving a stale key derives the wrong ETH address. The page
+    // then builds a SigRequest against that address and finalize_signature
+    // fails with PubkeyMismatch, which reads like a broken committee rather
+    // than a stale tab.
+    res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.status(200).json({
       groupPkHex: "0x" + Buffer.from(groupPk).toString("hex"),
       committee: committeePda.toBase58(),
