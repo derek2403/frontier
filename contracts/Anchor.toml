@@ -7,8 +7,8 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-eth_demo = "GfAuUesztZ98BhUZv6ymLxvxty7matXJJ4xRh5zrvPkA"
-soda = "2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd"
+eth_demo = "9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx"
+soda = "CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J"
 
 [registry]
 url = "https://api.apr.dev"

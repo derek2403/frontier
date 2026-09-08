@@ -238,8 +238,6 @@ export async function runDemo(
     [Buffer.from("sig"), walletKp.publicKey.toBuffer(), Buffer.from(payload)],
     sodaProgram.programId,
   );
-  const foreignPkXy = foreignPk.subarray(1);
-
   onEvent({ kind: "step", name: "signEthTransfer", status: "active" });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const signEthTransferTx = await (ethDemoProgram.methods as any)

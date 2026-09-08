@@ -1,17 +1,18 @@
 // Returns the committee's compressed secp256k1 group_pk so the page can
 // derive the ETH address client-side.
 //
-// Reads from the on-chain Committee PDA, NOT from a local key file —
-// after the MPC migration (update_committee), the joint key is whatever
-// the MPC committee produced via DKG. The private material never
-// exists in one place.
+// Reads from the on-chain Committee PDA rather than a local key file, so the
+// page always reflects whatever key the deployed committee actually holds.
+//
+// The program id comes from the committed IDL, not a literal: this file used
+// to hardcode the pre-`anchor keys sync` address, which silently pointed the
+// whole UI at a different deployment than the rest of the app.
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { SODA_PROGRAM_ID as SODA_PROGRAM_ID_STR } from "@/lib/idls";
 
-const SODA_PROGRAM_ID = new PublicKey(
-  "2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd",
-);
+const SODA_PROGRAM_ID = new PublicKey(SODA_PROGRAM_ID_STR);
 
 function solanaRpc(): string {
   return (
@@ -41,10 +42,9 @@ export default async function handler(
     // + 33-byte group_pk + u8 signer_count.
     const groupPk = acct.data.subarray(8 + 1 + 32, 8 + 1 + 32 + 33);
     // Never cache. The committee key changes on update_committee, and a
-    // browser serving a stale key derives the wrong ETH address. The page
-    // then builds a SigRequest against that address and finalize_signature
-    // fails with PubkeyMismatch, which reads like a broken committee rather
-    // than a stale tab.
+    // browser serving a stale key derives the wrong ETH address, which then
+    // fails finalize_signature with PubkeyMismatch and reads like a broken
+    // committee rather than a stale tab.
     res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.status(200).json({
       groupPkHex: "0x" + Buffer.from(groupPk).toString("hex"),

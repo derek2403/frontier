@@ -89,6 +89,8 @@ type SigRequested = {
   payload: Uint8Array
   chainTag: Uint8Array
   derivationSeeds: Uint8Array
+  /** Signature scheme; 0 = secp256k1 ECDSA. */
+  domainId: number
 }
 
 function decodeSigRequested(body: Uint8Array): SigRequested {
@@ -100,6 +102,7 @@ function decodeSigRequested(body: Uint8Array): SigRequested {
     payload: r.bytes(32),
     chainTag: r.bytes(32),
     derivationSeeds: r.vecU8(),
+    domainId: r.u32(),
   }
 }
 

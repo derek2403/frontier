@@ -1,5 +1,5 @@
 {
-  "address": "2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd",
+  "address": "CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J",
   "metadata": {
     "name": "soda",
     "version": "0.1.0",
@@ -125,6 +125,11 @@
     },
     {
       "name": "request_signature",
+      "docs": [
+        "Note there is no `foreign_pk_xy` parameter: the program derives the",
+        "foreign public key itself from the signer, so a caller cannot name an",
+        "address it does not control."
+      ],
       "discriminator": [
         25,
         225,
@@ -193,15 +198,6 @@
       ],
       "args": [
         {
-          "name": "foreign_pk_xy",
-          "type": {
-            "array": [
-              "u8",
-              64
-            ]
-          }
-        },
-        {
           "name": "derivation_seeds",
           "type": "bytes"
         },
@@ -222,6 +218,10 @@
               32
             ]
           }
+        },
+        {
+          "name": "domain_id",
+          "type": "u32"
         }
       ]
     },
@@ -386,6 +386,11 @@
       "code": 6008,
       "name": "RecoverFailed",
       "msg": "secp256k1_recover failed"
+    },
+    {
+      "code": 6009,
+      "name": "UnsupportedDomain",
+      "msg": "Unsupported signature domain (only 0 = secp256k1 ECDSA exists)"
     }
   ],
   "types": [
@@ -499,6 +504,14 @@
             }
           },
           {
+            "name": "domain_id",
+            "docs": [
+              "Signature scheme: 0 = secp256k1 ECDSA. Present so an Ed25519 committee",
+              "can be added later without a breaking instruction change."
+            ],
+            "type": "u32"
+          },
+          {
             "name": "expires_at",
             "type": "i64"
           },
@@ -565,6 +578,10 @@
           {
             "name": "derivation_seeds",
             "type": "bytes"
+          },
+          {
+            "name": "domain_id",
+            "type": "u32"
           }
         ]
       }
