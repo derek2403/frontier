@@ -168,6 +168,35 @@ export default function Home() {
     setResult(null);
     setTimeline(INITIAL_TIMELINE);
     setBusy(true);
+
+    // Top up the derived address from the sponsor key before anything else.
+    // Gas is paid by the tx's `from`, so this address needs ETH of its own.
+    // /api/fund is idempotent and returns immediately if already funded, and
+    // this runs inside `busy` because confirmation can take a minute or two.
+    if (!isFunded) {
+      try {
+        const fundRes = await fetch("/api/fund", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ address: ethAddress }),
+        });
+        const fundJson = (await fundRes.json()) as {
+          funded?: boolean;
+          balanceWei?: string;
+          error?: string;
+        };
+        if (!fundRes.ok || !fundJson.funded) {
+          setError(fundJson.error ?? "could not fund the derived address");
+          setBusy(false);
+          return;
+        }
+        if (fundJson.balanceWei) setBalance(BigInt(fundJson.balanceWei));
+      } catch (e) {
+        setError(`funding failed: ${(e as Error).message}`);
+        setBusy(false);
+        return;
+      }
+    }
     const updateStep = (name: keyof TimelineState, status: Step) =>
       setTimeline((prev) => ({ ...prev, [name]: status }));
 
@@ -326,7 +355,10 @@ export default function Home() {
   };
 
   const isFunded = balance !== null && balance >= 200_000_000_000_000n;
-  const buttonDisabled = !connected || !isFunded || balance === null || !ethAddress;
+  // Funding is no longer a gate: an unfunded address is topped up from the
+  // sponsor key on click. Blocking here just produced a dead button whenever
+  // the derivation changed, since every new owner starts at a zero balance.
+  const buttonDisabled = !connected || !ethAddress;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
