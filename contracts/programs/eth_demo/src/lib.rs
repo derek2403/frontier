@@ -60,6 +60,7 @@ pub mod eth_demo {
                 committee: ctx.accounts.committee.to_account_info(),
                 sig_request: ctx.accounts.sig_request.to_account_info(),
                 requester: ctx.accounts.user.to_account_info(),
+                payer: ctx.accounts.user.to_account_info(),
                 system_program: ctx.accounts.system_program.to_account_info(),
             },
         );

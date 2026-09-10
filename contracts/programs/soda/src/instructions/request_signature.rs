@@ -16,14 +16,25 @@ pub struct RequestSignature<'info> {
     pub committee: Account<'info, Committee>,
     #[account(
         init,
-        payer = requester,
+        payer = payer,
         space = SigRequest::SIZE,
         seeds = [b"sig", requester.key().as_ref(), &payload],
         bump,
     )]
     pub sig_request: Account<'info, SigRequest>,
-    #[account(mut)]
+    /// The OWNER of the foreign address: the account the tweak is keyed on.
+    /// A wallet signing for itself, or a program's PDA signing through
+    /// `invoke_signed`. Nothing else about the request depends on which.
     pub requester: Signer<'info>,
+    /// Whoever pays the rent for the `SigRequest` account.
+    ///
+    /// Separate from `requester` because they are separate roles, and
+    /// conflating them made program ownership awkward: a PDA that owns a
+    /// foreign address would have had to hold lamports before it could ever
+    /// ask for a signature. A wallet requesting for itself simply passes
+    /// itself twice.
+    #[account(mut)]
+    pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 

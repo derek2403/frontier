@@ -133,6 +133,7 @@ fn commit<'info>(
             committee: accounts.committee.to_account_info(),
             sig_request: accounts.sig_request.to_account_info(),
             requester: accounts.user.to_account_info(),
+            payer: accounts.user.to_account_info(),
             system_program: accounts.system_program.to_account_info(),
         },
     );
