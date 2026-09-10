@@ -11,6 +11,7 @@ resolver = "2"
 members = [
     "programs/soda",
     "programs/eth_demo",
+    "programs/sui_demo",
     "signer",
 ]
 
