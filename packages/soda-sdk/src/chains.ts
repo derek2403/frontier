@@ -10,8 +10,14 @@
 // DIFFERENT addresses per chain. That is deliberate: it is NEAR's "use a
 // distinct derivation path per chain" advice, and it means Sepolia keeps the
 // tag it has always had, so no existing derived address changes.
+//
+// Non-EVM chains have their own registry next to their encoder (Sui is in
+// sui.ts). `chainFamily` is the one switch that tells a caller which one a
+// DEMO_CHAIN key belongs to.
 
 import { AAVE_V3_BASE_SEPOLIA, AAVE_V3_SEPOLIA, type AaveV3Addresses } from "./aave";
+import { SUI_CHAINS, type SuiChainKey } from "./sui";
+import { safeEnv } from "./sui-ptb";
 
 export type EvmChainKey = "sepolia" | "base-sepolia";
 
@@ -75,11 +81,33 @@ export const CHAINS: Record<EvmChainKey, EvmChain> = {
   },
 };
 
-/** Resolve a chain from DEMO_CHAIN-style input. Unset = Sepolia. */
+export type ChainKey = EvmChainKey | SuiChainKey;
+export type ChainFamily = "evm" | "sui";
+
+/**
+ * Which encoder a DEMO_CHAIN key needs. Unset = Sepolia, so "evm". The CLI
+ * wrapper, the verify tool and the web routes branch on this once, at the
+ * top, instead of each guessing from the key's spelling.
+ */
+export function chainFamily(key: string | undefined | null): ChainFamily {
+  const k = (key ?? "").trim().toLowerCase() || "sepolia";
+  if (k in CHAINS) return "evm";
+  if (k in SUI_CHAINS) return "sui";
+  throw new Error(
+    `unknown chain "${key}" — expected one of: ${[...Object.keys(CHAINS), ...Object.keys(SUI_CHAINS)].join(", ")}`,
+  );
+}
+
+/** Resolve an EVM chain from DEMO_CHAIN-style input. Unset = Sepolia. */
 export function getChain(key: string | undefined | null): EvmChain {
   const k = (key ?? "").trim().toLowerCase() || "sepolia";
   const chain = (CHAINS as Record<string, EvmChain>)[k];
   if (!chain) {
+    if (k in SUI_CHAINS) {
+      throw new Error(
+        `"${k}" is a Sui chain — use getSuiChain() / the Sui demo path (chainFamily() tells them apart)`,
+      );
+    }
     throw new Error(
       `unknown chain "${key}" — expected one of: ${Object.keys(CHAINS).join(", ")}`,
     );
@@ -99,7 +127,7 @@ export function chainById(chainId: bigint): EvmChain | undefined {
  */
 export function chainRpcUrl(
   chain: EvmChain,
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = safeEnv(),
 ): string {
   const v = env[chain.rpcEnv]?.trim();
   return v && v.length > 0 ? v : chain.defaultRpc;

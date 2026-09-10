@@ -2,7 +2,7 @@
   "name": "@soda-sdk/core",
   "version": "0.1.0",
   "type": "module",
-  "description": "SODA SDK: derivation, RLP encoding, and a Sepolia client. Lets a Solana program request external-chain signatures via SODA.",
+  "description": "SODA SDK: derivation, Ethereum RLP + Sui BCS encoding, and RPC clients. Lets a Solana program request external-chain signatures via SODA.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -21,7 +21,9 @@
     "secp256k1",
     "ecdsa",
     "ethereum",
+    "sui",
     "rlp",
+    "bcs",
     "mpc"
   ],
   "exports": {
@@ -63,6 +65,8 @@
     "@noble/hashes": "^1.5.0"
   },
   "devDependencies": {
+    "@mysten/deepbook-v3": "^2.3.0",
+    "@mysten/sui": "^2.30.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
