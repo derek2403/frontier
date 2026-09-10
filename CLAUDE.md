@@ -433,6 +433,74 @@ pnpm sdk:test                                  # 10 TS parity tests
   there's no real broadcast). Judges/viewers see the cryptographic audit
   without needing to copy/paste a hash between commands.
 
+## Sui: second chain family — added 2026-09-10
+
+Same primitive, same `soda` program, same committee key, same
+`finalize_signature`. Sui accepts secp256k1 natively (signature scheme flag
+`0x01`), so a Solana wallet's derived key is a first-class Sui account. What
+changes is the envelope, and all of it lives outside `soda`:
+
+```
+address  = blake2b256(0x01 ‖ compressed_pk)                     (not keccak)
+tx bytes = BCS TransactionData::V1 { kind, sender, gas_data, expiration }
+payload  = sha256(blake2b256(intent(0,0,0) ‖ tx bytes))          ← what soda stores
+sig      = base64(0x01 ‖ r ‖ s ‖ compressed_pk)                  (98 bytes)
+digest   = base58(blake2b256("TransactionData::" ‖ tx bytes))    (what Suiscan shows)
+```
+
+| Component | Path | Run | Notes |
+|---|---|---|---|
+| **sui_demo program** | `contracts/programs/sui_demo/` | `DEMO_CHAIN=sui-testnet ./demo.sh` | `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`, **live on devnet** (deployed 2026-09-10, authority `D5pwjGzq…`). `sign_sui_transfer(recipient, amount_mist, gas_payment[], gas_price, gas_budget, chain_tag, seeds)` builds the split-and-transfer PTB; `sign_sui_tx(kind_bytes, …)` wraps any BCS `TransactionKind` and is what the DeepBook actions use. Both derive the SENDER on-chain (Sui signs over it), BCS-encode the envelope, hash with a hand-written blake2b (`src/blake2b.rs`, no syscall exists) + the sha256 syscall, CPI `request_signature`, emit `SuiTxRequested { sig_request, sender, tx_bytes }`. 12 Rust unit tests: blake2b vectors from `@noble/hashes`, BCS/hash vectors from `@mysten/sui`. |
+| **SDK Sui module** | `packages/soda-sdk/src/sui.ts` | `pnpm sdk:test` | Registry (`SUI_CHAINS`, `getSuiChain`, `suiGraphqlUrl`), address, envelope encoder, hashing, signature envelope, local-key helpers, `SuiGraphQl` client, faucet helper. `chains.ts` gained `chainFamily(key)`. |
+| **SDK PTB encoder** | `packages/soda-sdk/src/sui-ptb.ts` | `pnpm sdk:test` | A small BCS encoder for programmable blocks (inputs, commands, arguments, Move type tags). The Sui counterpart of `rlp.ts`: it exists so the published package keeps its `@noble/*`-only dependency list instead of shipping `@mysten/sui`. |
+| **SDK DeepBook module** | `packages/soda-sdk/src/deepbook.ts` | `pnpm sdk:test` | The Sui counterpart of `aave.ts`: pool/coin constants, `deepbookBuyBaseKind`, `deepbookSellBaseKind`, `deepbookQuoteKind` + `decodeDeepbookQuote` + `quoteRejection`, slippage and formatting. |
+| **CLI demo** | `apps/demo/src/demo-sui.ts` | `pnpm demo:sui` | Mirrors `demo.ts`: derive → fund (`SUI_FUNDER_KEY` sponsor, else faucet) → gas coins + reference gas price → quote → build/simulate → `sign_sui_tx` → sign → `finalize_signature` → `executeTransaction`. `DEMO_ACTION=swap` (default) `| sell | transfer`. |
+| **verify tool** | `apps/demo/src/verify-sui.ts` | `pnpm verify:sui <digest>` | Same audit as `verify.ts` for a Sui digest; `VERIFY_REQUESTER=<pubkey>` audits a web (Phantom) run. Resolves its network from `DEMO_CHAIN` only when that names a Sui chain, else `SUI_CHAIN`, else testnet — the repo's `.env` sets `DEMO_CHAIN=base-sepolia`, which used to make the bare command throw. |
+| **relayer** | `apps/relayer/` | `pnpm relayer:dev` | Second assembler path: caches `SuiTxRequested`, and on `SigCompleted` recovers the pubkey from (payload, sig, recovery_id), checks it hashes to the cached sender, and submits via `executeTransaction`. `SUI_CHAIN` picks the network. Skips Sui with a warning if `contracts/target/idl/sui_demo.json` is absent. |
+| **demo.sh** | `demo.sh` | `DEMO_CHAIN=sui-*` | Routes sui-* keys to `demo:sui` / `verify:sui` and only deploys the program that is missing (`anchor deploy --program-name`). Values set on the command line now beat `.env`, and only the keys `.env` defines are snapshotted (replaying a whole `export -p` aborts under `set -e` in a shell that exports readonly `SHELLOPTS`). |
+
+### DeepBook: what the Sui demo actually does
+
+The headline action is not a transfer. The derived address trades on **DeepBook
+V3**, Sui's on-chain central limit order book, on the **DEEP/SUI** pool
+(`0x48c95963…ae9f`, package `0xd874d241…bb24`). That pool is *whitelisted*:
+taker and maker fees are zero and no DEEP is needed to pay fees, so the demo
+does not inherit a second funding problem on top of gas. A `coin::zero<DEEP>`
+is passed as the fee input.
+
+| Action | Move call | Kind bytes | What it proves |
+|---|---|---|---|
+| `swap` (default) | `pool::swap_exact_quote_for_base<DEEP,SUI>` | 427 | The address takes liquidity off a real book and ends up holding a token it never had. Quote coin is split off the gas coin, so only SUI is needed. |
+| `sell` | `pool::swap_exact_base_for_quote<DEEP,SUI>` | 567 | It spends **owned coin objects it acquired itself**, not gas it was given. The Sui analogue of the Aave borrow. |
+
+Quoting is a read-only programmable block (`mid_price`,
+`get_{base,quote}_quantity_out`, `whitelisted`) run through
+`simulateTransaction`, whose `outputs { returnValues { value { json } } }`
+carries the Move return values. That is the Sui equivalent of the EVM
+demo's `eth_estimateGas` pre-check, and it is where `min_out` comes from
+(1% slippage). It matters because a DeepBook swap below the pool minimum
+(10 DEEP) does **not** revert — it returns the input untouched — so "would
+this fill?" has to be asked explicitly.
+
+Facts verified 2026-09-10:
+- **Both DeepBook actions ran end to end**, Solana devnet → Sui testnet, each audited by `pnpm verify:sui` with every check MATCH. Buy: 0.5 SUI → 19 DEEP, digest `38myk9NxEb4hpwooEzTX5aiY5kqgVvn5BuFgLbFUxLmR`. Sell: 19 DEEP → 0.478990 SUI, digest `5XApu3HLMQLUNDoLVBWvYkafifuXG1r2pQT1MzAqZ8qU`. Balance trail 5.018002 → 4.523790 (+19 DEEP) → 4.997409 SUI.
+- The hand-rolled PTB encoder is byte-identical to `@mysten/deepbook-v3` v2.3.0's own output and to `@mysten/sui`'s independent encoder. 61 vitest cases across the SDK.
+- `MAX_KIND_LEN` is **640**, not a round 768: `kind_bytes` is raw instruction data that no address lookup table can compress, and with `MAX_GAS_COINS = 4` a larger block cannot fit Solana's 1232-byte transaction. The live swap's Solana transaction carried a 427-byte kind.
+- Mysten's public fullnodes answer JSON-RPC with "deprecated, migrate to gRPC or GraphQL"; the client uses `https://graphql.testnet.sui.io/graphql` (CORS `*`, so the browser can call it). Alchemy's Sui endpoint (`SUI_TESTNET_RPC_URL` in `.env`) still serves JSON-RPC and is what `@mysten/*` tooling needs; SODA itself only needs GraphQL. In this schema `objects(filter:{type})` yields `MoveObject` nodes (use `contents { json }` directly), `signatures.scheme` is a union (not requested), `simulateTransaction(transaction: { bcs: { value } })` takes a full `TransactionData`, `executeTransaction(transactionDataBcs, signatures)` waits for finality, and `transaction(digest).transactionBcs` is the bare `TransactionData`.
+- **Indexing lags finality.** `executeTransaction` returns when the transaction is final, but reading it back by digest can 404 for a few seconds, which is why `verify:sui` polls. Mysten documents this on the mutation itself.
+- `faucet.testnet.sui.io/v2/gas` rate-limits with a shared bucket ("Wait for Ns" that keeps moving). Retrying on the advertised deadline never got through; the sponsor key is the reliable path and the web faucet (`faucet.sui.io`) is the human fallback.
+- Derived Sui address of the laptop wallet `D5pwjGzq…` under the current committee key and the `sui-testnet` tag: `0x7b117f9d1a245c001a4b8c8979b4bf4857fb97d96c0daf3ba3a24bd71131eaee`.
+- Sponsor (`SUI_FUNDER_KEY` in `.env`) is the user's own key, **Ed25519** `0xb9b81ffd9f29aefd39042bf4a75e764b99c72621907d04a1f404bfa74426535d`, ~36 SUI. `parseSuiPrivateKey` accepts either a `suiprivkey1…` export (Ed25519 or secp256k1, bech32) or 32 bytes of secp256k1 hex, and `signSuiTransactionWithKey` dispatches on the scheme — Ed25519 signs the intent digest directly, secp256k1 signs sha256 of it.
+
+Not changed for Sui: the Rust signer daemon. The MPC nodes and subscriber are
+also untouched, but note that MPC mode cannot authorize *any* request today,
+EVM or Sui: `apps/mpc-node/src/authorize.ts` derives the tweak from a
+`SODA_KNOWN_REQUESTERS` program id while the chain derives it from
+`requester.key()` (the signing wallet), so no candidate ever reproduces the
+stored `foreign_pk_xy`. That is on top of the already-documented `tweakHex`
+bug, which would defeat MPC mode even once the authorization keying is
+fixed.
+
 ## AWS MPC committee — DECOMMISSIONED 2026-09-07
 
 **Do not trust the IPs below.** The instances are gone. Probing
