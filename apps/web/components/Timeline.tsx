@@ -1,21 +1,30 @@
 // Five-step progress display, driven by event-subscription state in the parent.
+//
+// The pipeline has the same five stages on every chain — a Solana ix that
+// commits the payload, the SigRequest, the off-chain signature,
+// finalize_signature, and the foreign broadcast — so the component takes the
+// stage labels as a prop and only the words change per chain. The EVM labels
+// are the default so the original page needs no changes.
 
 export type Step = "idle" | "active" | "done" | "error";
 
-export type TimelineState = {
-  signEthTransfer: Step;
-  sigRequested: Step;
-  signOffChain: Step;
-  finalizeOnChain: Step;
-  broadcastEth: Step;
-};
+export type TimelineKey =
+  | "signEthTransfer"
+  | "sigRequested"
+  | "signOffChain"
+  | "finalizeOnChain"
+  | "broadcastEth";
 
-const STEPS: Array<{
-  key: keyof TimelineState;
+export type TimelineState<K extends string = TimelineKey> = Record<K, Step>;
+
+export type TimelineStep<K extends string = TimelineKey> = {
+  key: K;
   label: string;
   sub: string;
   details?: string[];
-}> = [
+};
+
+export const EVM_TIMELINE_STEPS: TimelineStep[] = [
   {
     key: "signEthTransfer",
     label: "Solana: sign_eth_transfer",
@@ -57,18 +66,28 @@ function dot(step: Step) {
   return <div className={`${base} bg-zinc-700`} />;
 }
 
-export default function Timeline({ state }: { state: TimelineState }) {
+export default function Timeline<K extends string = TimelineKey>({
+  state,
+  steps,
+}: {
+  state: TimelineState<K>;
+  /** Stage labels; omitted = the EVM pipeline. Keys must match `state`. */
+  steps?: TimelineStep<K>[];
+}) {
+  // When `steps` is omitted, K is the default key set by construction, so the
+  // EVM list is the right shape; TS cannot see that through the generic.
+  const list = steps ?? (EVM_TIMELINE_STEPS as unknown as TimelineStep<K>[]);
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
       <div className="text-xs uppercase tracking-wider text-zinc-500">Pipeline</div>
       <ol className="mt-4 space-y-4">
-        {STEPS.map((s, i) => {
+        {list.map((s, i) => {
           const step = state[s.key];
           return (
             <li key={s.key} className="flex items-start gap-3">
               <div className="flex flex-col items-center pt-1">
                 {dot(step)}
-                {i < STEPS.length - 1 ? <div className="mt-1 h-8 w-px bg-zinc-800" /> : null}
+                {i < list.length - 1 ? <div className="mt-1 h-8 w-px bg-zinc-800" /> : null}
               </div>
               <div className="flex-1">
                 <div className={step === "idle" ? "text-zinc-500" : "text-zinc-100"}>

@@ -2,6 +2,7 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { AnchorProvider, Program, type Wallet } from "@coral-xyz/anchor";
 import {
   useAnchorWallet,
@@ -12,6 +13,7 @@ import {
 import DerivedAddressCard from "@/components/DerivedAddressCard";
 import SignAndSendButton from "@/components/SignAndSendButton";
 import SignedHexView from "@/components/SignedHexView";
+import StepCard from "@/components/StepCard";
 import Timeline, { type TimelineState, type Step } from "@/components/Timeline";
 import {
   AAVE_BORROW_AMOUNT_USDC,
@@ -190,63 +192,6 @@ function fmtUsdc(v: bigint): string {
 }
 function fmtEth18(v: bigint, unit: string): string {
   return `${(Number(v) / 1e18).toFixed(9)} ${unit}`;
-}
-
-// A step is `locked` until the one before it produced its artifact. Locking is
-// visual + pointer-events only; the underlying buttons are separately disabled,
-// so a stray click can never skip ahead.
-type StepState = "locked" | "active" | "done";
-
-function StepCard({
-  n,
-  title,
-  state,
-  children,
-}: {
-  n: number;
-  title: string;
-  state: StepState;
-  children: React.ReactNode;
-}) {
-  const locked = state === "locked";
-  return (
-    <section
-      aria-current={state === "active" ? "step" : undefined}
-      className={[
-        "rounded-2xl border p-5 transition",
-        state === "active"
-          ? "border-emerald-700/70 bg-zinc-900/60"
-          : state === "done"
-            ? "border-zinc-800 bg-zinc-900/30"
-            : "border-zinc-900 bg-zinc-900/10",
-        locked ? "pointer-events-none select-none opacity-40" : "",
-      ].join(" ")}
-    >
-      <div className="flex items-center gap-3">
-        <span
-          className={[
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-            state === "done"
-              ? "bg-emerald-500 text-emerald-950"
-              : state === "active"
-                ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/60"
-                : "bg-zinc-800 text-zinc-500",
-          ].join(" ")}
-        >
-          {state === "done" ? "✓" : n}
-        </span>
-        <h2
-          className={[
-            "text-sm font-medium",
-            state === "locked" ? "text-zinc-500" : "text-zinc-100",
-          ].join(" ")}
-        >
-          {title}
-        </h2>
-      </div>
-      <div className="mt-4">{children}</div>
-    </section>
-  );
 }
 
 type RunResult = {
@@ -707,14 +652,22 @@ export default function Home() {
           </div>
           {/* The wallet button lives in step 1 only. A second copy up here
               made "connect" look like page chrome rather than the first act. */}
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-          >
-            Docs ↗
-          </a>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/sui"
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            >
+              Sui demo →
+            </Link>
+            <a
+              href={DOCS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            >
+              Docs ↗
+            </a>
+          </div>
         </div>
       </header>
 

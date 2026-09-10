@@ -7,8 +7,19 @@
 // Ethereum Sepolia — and the only symptom was an RPC error from the wrong
 // chain. One variable now drives both: the server falls back to the public
 // one, and every route checks the chain the browser says it is on.
+//
+// The Sui page has its own pair (NEXT_PUBLIC_SUI_CHAIN / SUI_CHAIN) with the
+// same fallback and the same per-request check, so the two demos can point at
+// different networks without one variable meaning two things.
 
-import { getChain, type EvmChain, type EvmChainKey } from "@soda-sdk/core";
+import {
+  getChain,
+  getSuiChain,
+  type EvmChain,
+  type EvmChainKey,
+  type SuiChain,
+  type SuiChainKey,
+} from "@soda-sdk/core";
 
 export function serverChain(): EvmChain {
   // `||`, not `??`: a dashboard variable saved with an empty value is "" and
@@ -36,4 +47,25 @@ export function chainMismatch(
   );
 }
 
-export type { EvmChainKey };
+/** Sui network for /api/sui/*. Unset = testnet, matching the CLI's default. */
+export function serverSuiChain(): SuiChain {
+  return getSuiChain(
+    process.env.SUI_CHAIN?.trim() || process.env.NEXT_PUBLIC_SUI_CHAIN,
+  );
+}
+
+/** Same contract as chainMismatch, for the Sui pair of variables. */
+export function suiChainMismatch(
+  requested: unknown,
+  server: SuiChain,
+): string | null {
+  if (requested == null || requested === "") return null;
+  if (requested === server.key) return null;
+  return (
+    `chain mismatch: the page was built for "${String(requested)}" but the ` +
+    `server is configured for "${server.key}". Set NEXT_PUBLIC_SUI_CHAIN ` +
+    `(and SUI_CHAIN, if set) to the same value and redeploy.`
+  );
+}
+
+export type { EvmChainKey, SuiChainKey };

@@ -7,8 +7,10 @@
 
 import sodaIdl from "./idl/soda.json";
 import ethDemoIdl from "./idl/eth_demo.json";
+import suiDemoIdl from "./idl/sui_demo.json";
 
-export { sodaIdl, ethDemoIdl };
+export { sodaIdl, ethDemoIdl, suiDemoIdl };
 
 export const SODA_PROGRAM_ID: string = (sodaIdl as { address: string }).address;
 export const ETH_DEMO_PROGRAM_ID: string = (ethDemoIdl as { address: string }).address;
+export const SUI_DEMO_PROGRAM_ID: string = (suiDemoIdl as { address: string }).address;
