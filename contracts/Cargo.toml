@@ -12,6 +12,7 @@ members = [
     "programs/soda",
     "programs/eth_demo",
     "programs/sui_demo",
+    "programs/vault_demo",
     "signer",
 ]
 

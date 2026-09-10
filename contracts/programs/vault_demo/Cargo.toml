@@ -1,0 +1,26 @@
+[package]
+name = "vault_demo"
+version.workspace = true
+description = "SODA vault — a Solana PDA owns a foreign address and signs under program policy"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "vault_demo"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "soda/idl-build", "eth_demo/idl-build"]
+
+[dependencies]
+anchor-lang = { workspace = true }
+solana-program = { workspace = true }
+soda = { path = "../soda", features = ["cpi"] }
+# For eth_rlp only. The encoder is already written and tested there; a second
+# copy would be a second thing to keep byte-identical with the TS SDK.
+eth_demo = { path = "../eth_demo", features = ["cpi"] }
