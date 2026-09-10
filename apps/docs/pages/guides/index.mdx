@@ -15,7 +15,11 @@ self-contained: copy the code, fill in your config, run.
     Derive a Sepolia address from a Solana PDA, request a signature on-chain,
     assemble the signed RLP, and broadcast. End-to-end in TypeScript.
   </Cards.Card>
+  <Cards.Card title="Sign a Sui tx" href="/guides/sign-a-sui-tx">
+    Same key, non-EVM chain. Derive a Sui address, BCS-encode a transfer,
+    request the signature through `sui_demo`, and execute over GraphQL.
+  </Cards.Card>
 </Cards>
 
 More guides land here as new chains come online (BTC P2WPKH, EIP-1559,
-contract calls).
+Sui Move calls through `sign_sui_tx`).

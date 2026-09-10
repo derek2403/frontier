@@ -28,7 +28,17 @@ Where:
 - `group_pk` is the committee's aggregate public key on the secp256k1 curve.
 - `G` is the secp256k1 generator point.
 - `address_encoding` is chain-specific: keccak256 last-20-bytes for Ethereum,
-  HASH160 + bech32 for Bitcoin P2WPKH, and so on.
+  `blake2b256(0x01 || compressed_pk)` for Sui (the `0x01` is Sui's secp256k1
+  scheme flag, so the address commits to the signature scheme), HASH160 +
+  bech32 for Bitcoin P2WPKH, and so on.
+
+Because `chain_tag` is a tweak input, the same owner and seeds give a
+different `foreign_pk`, and therefore an unrelated address, on every chain:
+`tag32("base-sepolia")` and `tag32("sui-testnet")` do not share a key even
+though both chains verify secp256k1. This is deliberate (NEAR's "distinct
+derivation path per chain" advice): a signature produced for one chain can
+never be replayed as a signature for the same owner on another, and each
+chain's address can be funded and audited on its own.
 
 ## Why this works
 
@@ -98,6 +108,8 @@ The derivation algorithm is implemented twice for cross-language testing:
 - Rust: `contracts/programs/soda/src/derivation.rs` (`#[cfg(test)]` only;
   kept for parity tests against the TS implementation).
 
-Run `pnpm sdk:test` (TS, 13 vitest cases) and `cargo test --workspace --lib`
-(Rust, 16 cases) to verify both implementations agree on the canonical
-G + G = 2G vector and known-answer ETH address derivations.
+Run `pnpm sdk:test` (TS, 42 vitest cases, of which 23 hold the Sui encoders
+byte-for-byte against `@mysten/sui`) and `cargo test --workspace --lib`
+(Rust) to verify both implementations agree on the canonical G + G = 2G
+vector, known-answer ETH address derivations, and the Sui address / payload
+vectors shared with `programs/sui_demo`.

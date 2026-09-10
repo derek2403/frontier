@@ -9,7 +9,7 @@ second wallet, no ETH to hold. The user only ever touches SOL.
 
 - Live demo: <https://frontier-web-five.vercel.app> (Solana devnet → Base Sepolia)
 - Docs: <https://frontier-docs-cazz.vercel.app>
-- Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`
+- Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`, `sui_demo` `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`
 
 ---
 
@@ -40,9 +40,12 @@ surface and a new way to lose money.
 
 SODA gives every Solana account a deterministic address on every other
 ECDSA chain (Ethereum, Base, Arbitrum, Polygon, BNB, Avalanche, and with a
-different encoder, Bitcoin). Nobody holds the private key for that address.
-It can only sign when the SODA program on Solana says so, and the program
-only says so when the owning Solana account has signed a request.
+different encoder, Bitcoin). It is not an EVM trick: Sui, a non-EVM chain
+with its own address rule, transaction format and hash, is reached with the
+same key because it accepts secp256k1 signatures natively. Nobody holds the
+private key for that address. It can only sign when the SODA program on
+Solana says so, and the program only says so when the owning Solana account
+has signed a request.
 
 From the user's side:
 
@@ -66,8 +69,9 @@ foreign-chain keys to a SaaS custodian.
 
 ## What works today
 
-Everything below has been run end to end on Solana devnet and Base Sepolia
-and is reproducible with the commands further down.
+Everything below is reproducible with the commands further down, and every
+row has been run end to end on Solana devnet against a public network: Base
+Sepolia for the EVM rows, Sui testnet for the Sui ones.
 
 | Step | Where | What |
 |---|---|---|
@@ -77,6 +81,8 @@ and is reproducible with the commands further down.
 | Broadcast | Base Sepolia | The signed transaction is sent. |
 | Act | Aave V3 | `depositETH` puts ETH into Aave; the Solana wallet's address receives aWETH and earns interest. `Pool.borrow` takes USDC out against that collateral. |
 | Audit | `pnpm verify <hash>` | Anyone can tie the broadcast transaction back to the Solana request in eight checks, using only public state. |
+| Sui | Solana, `sui_demo` → `soda`, then Sui testnet | `DEMO_CHAIN=sui-testnet ./demo.sh`: the program derives the wallet's Sui address, BCS-encodes the exact Sui transaction from it on-chain, commits `sha256(blake2b(intent ‖ tx))`, and the same `finalize_signature` verifies the committee's signature. The signed bytes go to Sui over GraphQL; `pnpm verify:sui <digest>` audits the result. The encoders are held byte-for-byte against `@mysten/sui` in tests. |
+| Act (Sui) | DeepBook V3 | The derived address trades on Sui's on-chain central limit order book: `swap_exact_quote_for_base` buys DEEP with SUI, `swap_exact_base_for_quote` sells it back. The pool is whitelisted, so fees are zero and no DEEP is needed to trade. |
 
 A concrete run: the Solana wallet `D5pwjGzq…` owns
 `0xd55282657a707792c1be66a511f81d7d45ff1ce5` on Base Sepolia. That address
@@ -85,8 +91,22 @@ has deposited ETH into Aave three times and borrowed 0.1 USDC against it
 Aave's own Pool contract reports the position: about $0.75 of collateral,
 $0.10 of debt, health factor 6.4. No private key for that address exists.
 
-Two chains are wired up, Ethereum Sepolia and Base Sepolia. Adding a chain is
-one entry in `packages/soda-sdk/src/chains.ts`.
+A concrete Sui run (2026-09-10): the same wallet `D5pwjGzq…` owns
+`0x7b117f9d1a245c001a4b8c8979b4bf4857fb97d96c0daf3ba3a24bd71131eaee` on Sui
+testnet, and that address traded on DeepBook in both directions. It bought
+19 DEEP for 0.5 SUI at the book's price
+([digest `38myk9Nx…`](https://suiscan.xyz/testnet/tx/38myk9NxEb4hpwooEzTX5aiY5kqgVvn5BuFgLbFUxLmR)),
+then sold the 19 DEEP back for 0.478990 SUI
+([digest `5XApu3HL…`](https://suiscan.xyz/testnet/tx/5XApu3HLMQLUNDoLVBWvYkafifuXG1r2pQT1MzAqZ8qU)).
+The second one is the interesting half: it spends coin objects the address
+acquired itself rather than the SUI it was funded with. Both went through
+Solana devnet, both were verified by `finalize_signature` before Sui saw
+them, and `pnpm verify:sui <digest>` passes every check on each.
+
+Three chains are wired up: Ethereum Sepolia and Base Sepolia (one entry each
+in `packages/soda-sdk/src/chains.ts`) and Sui testnet / devnet, the first
+non-EVM family (`packages/soda-sdk/src/sui.ts` plus the `sui_demo` caller
+program). The `soda` program did not change for Sui.
 
 ## How it works
 
@@ -98,11 +118,13 @@ Solana account gets its own address by *tweaking* that key:
 ```
 tweak      = sha256("SODA-v1" ‖ owner_pubkey ‖ path ‖ chain_tag)
 foreign_pk = group_pk + tweak · G
-address    = keccak256(foreign_pk)[12..]        (for EVM chains)
+address    = keccak256(foreign_pk)[12..]                 (EVM chains)
+address    = blake2b256(0x01 ‖ compressed(foreign_pk))   (Sui; 0x01 = secp256k1 scheme flag)
 ```
 
 `owner_pubkey` is the Solana account. `path` lets one owner have many
-addresses. `chain_tag` gives the same owner a different address per chain.
+addresses. `chain_tag` gives the same owner a different address per chain,
+on Sui as much as on Base.
 The tweak is public; the secret that signs for the address is
 `group_sk + tweak`, which only the committee can form.
 
@@ -362,8 +384,10 @@ and dApps that embed the SDK.
    jurisdictions, shares in attested enclaves, restaking bond and slashing
    via on-chain proofs.
 4. **More chains, same program.** The Solana program is already
-   chain-agnostic. Add Arbitrum, Polygon and BNB as registry entries;
-   Bitcoin via a BIP143 encoder in the SDK.
+   chain-agnostic, and Sui has shipped as the first non-EVM family (an
+   encoder in the SDK plus a caller program, `soda` untouched). Bitcoin is
+   next, via a BIP143 encoder in the SDK and a `btc_demo` caller; Arbitrum,
+   Polygon and BNB are registry entries.
 5. **Mainnet-beta pilot** with one institutional partner running a treasury
    address on Base.
 6. **Intents.** A Solana program that holds a derived address and releases
@@ -376,7 +400,7 @@ wallet at `~/.config/solana/id.json` with a little devnet SOL.
 
 ```bash
 pnpm install
-cp .env.example .env            # set DEMO_CHAIN, RPC URLs, SEPOLIA_FUNDER_KEY
+cp .env.example .env            # set DEMO_CHAIN, RPC URLs, SEPOLIA_FUNDER_KEY (and SUI_FUNDER_KEY for Sui)
 ```
 
 **CLI, the canonical demo.** One command does everything and ends with a
@@ -386,26 +410,40 @@ cryptographic audit of the transaction it just broadcast:
 ./demo.sh                          # Aave depositETH, 0.0001 ETH
 DEMO_ACTION=borrow ./demo.sh       # Aave Pool.borrow, 0.1 USDC against the aWETH
 DEMO_CHAIN=base-sepolia ./demo.sh  # sepolia | base-sepolia
+DEMO_CHAIN=sui-testnet ./demo.sh   # Sui: buy DEEP on DeepBook (sui-testnet | sui-devnet)
+DEMO_ACTION=sell DEMO_CHAIN=sui-testnet ./demo.sh    # sell that DEEP back for SUI
+DEMO_ACTION=transfer DEMO_CHAIN=sui-testnet ./demo.sh  # plain SUI transfer
 ```
 
-**Web.** The same pipeline with Phantom signing the Solana side:
+The Sui run funds the derived address from `SUI_FUNDER_KEY` or the public
+faucet, and otherwise prints the address and waits for you to fund it at
+<https://faucet.sui.io> (a DeepBook trade needs about 0.7 SUI, a transfer
+0.02). Set `SUI_TESTNET_RPC_URL` to a provider if your sponsor key holds
+its SUI in an address balance rather than in coin objects, which is what a
+wallet or faucet usually gives you: such an address owns no coin object,
+so GraphQL alone cannot spend from it.
+
+**Web.** The same pipeline with Phantom signing the Solana side; `/sui` is
+the Sui version of the page:
 
 ```bash
 cp apps/web/.env.example apps/web/.env
-pnpm --filter web dev              # http://localhost:3000
+pnpm --filter web dev              # http://localhost:3000, http://localhost:3000/sui
 ```
 
 **Verify any past transaction** from public state only:
 
 ```bash
 pnpm verify 0x732af17f38094e7513cd7680ab79c2802b8733fa58be48e9ec701f24bc4b8db9
+DEMO_CHAIN=sui-testnet pnpm verify:sui <sui_tx_digest>
 ```
 
 **Tests:**
 
 ```bash
 cd contracts && cargo test --workspace --lib   # program unit tests, incl. the recover-trick cross-check
-pnpm sdk:test                                  # TS derivation, RLP and Aave calldata vectors
+                                               # and sui_demo's blake2b / BCS vectors from @mysten/sui
+pnpm sdk:test                                  # TS derivation, RLP, Aave calldata and Sui (byte-for-byte vs @mysten/sui)
 ```
 
 ## Repository layout
@@ -414,18 +452,21 @@ pnpm sdk:test                                  # TS derivation, RLP and Aave cal
 contracts/programs/soda/       the primitive: init/update committee, request_signature
                                (derives on chain), finalize_signature (secp256k1_recover)
 contracts/programs/eth_demo/   example caller: builds the EVM tx, hashes it, CPIs soda
-packages/soda-sdk/             TypeScript: derivation, RLP, chain registry, Aave calldata
-apps/demo/                     CLI demo (demo.ts) and the audit tool (verify.ts)
+contracts/programs/sui_demo/   Sui caller: derives the sender, BCS-encodes, blake2b (no syscall) + sha256, CPIs soda
+packages/soda-sdk/             TypeScript: derivation, RLP, chain registry, Aave calldata,
+                               sui.ts (address, BCS, hashes, signature envelope, GraphQL client)
+apps/demo/                     CLI demos (demo.ts, demo-sui.ts) and the audit tools (verify.ts, verify-sui.ts)
 apps/web/                      Next.js demo: Phantom → /api/finalize → broadcast
 apps/mpc-node/                 threshold-ECDSA node (Lindell '17), on-chain authorisation
 apps/mpc-coordinator/          drives the signing protocol between the two nodes
 apps/mpc-subscriber/           watches SigRequested, asks the committee, finalizes
-apps/relayer/                  event subscriber that assembles and broadcasts signed txs
+apps/relayer/                  event subscriber that assembles and broadcasts signed txs (EVM RLP, Sui BCS)
 apps/docs/                     the documentation site
 ```
 
 ## Status
 
-Hackathon build. Live on Solana devnet with Ethereum Sepolia and Base
-Sepolia. Not audited. Do not put real money behind a derived address until
-the committee is *t*-of-*n* under independent operators.
+Hackathon build. Live on Solana devnet, reaching Ethereum Sepolia, Base
+Sepolia and Sui testnet, with all three caller programs deployed. Not
+audited. Do not put real money behind a derived address until the
+committee is *t*-of-*n* under independent operators.

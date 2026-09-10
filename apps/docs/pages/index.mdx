@@ -14,9 +14,12 @@ import CopyPrompt from '../components/CopyPrompt'
 
 SODA is an Anchor program plus an off-chain MPC committee that exposes cross-chain
 signing as a **CPI primitive**. Any Solana program calls one instruction and
-receives a valid `secp256k1` signature on Bitcoin, Ethereum, or any other ECDSA
-chain. The foreign-chain address is deterministically derived from the caller's
-`(program_id, seeds)`, so a Solana PDA literally owns the UTXO.
+receives a valid `secp256k1` signature on Ethereum, Base, Sui, Bitcoin, or any
+other chain that verifies ECDSA. The foreign-chain address is deterministically
+derived from the caller's `(program_id, seeds)`, so a Solana PDA literally owns
+the UTXO. Sui is the live proof that this is not an EVM trick: a non-EVM chain
+with a different address rule, transaction encoding and hash, reached with the
+same key because it accepts secp256k1 natively.
 
 ```rust
 soda::request_signature(
@@ -27,8 +30,12 @@ soda::request_signature(
 ```
 
 <Callout type="info">
-  v0 is live on Solana devnet and Sepolia. Run `./demo.sh` from the repo to
-  produce a real Sepolia transaction signed by a Solana program.
+  v0 is live on Solana devnet with Ethereum Sepolia and Base Sepolia, and the
+  same pipeline has moved SUI on Sui testnet. Run `./demo.sh` from the repo
+  to produce a real Sepolia transaction signed by a Solana program, or
+  `DEMO_CHAIN=sui-testnet ./demo.sh` for a Sui transfer from the same
+  wallet's Sui address (the `sui_demo` caller's devnet deploy is pending;
+  `demo.sh` deploys it wherever it is missing).
 </Callout>
 
 <Callout type="warning">
@@ -94,7 +101,8 @@ const { ethAddress } = deriveEthAddress(
 
 Read the full [Sign an Ethereum tx](/guides/sign-an-eth-tx) guide for the
 end-to-end flow (build unsigned RLP, request the on-chain signature,
-broadcast).
+broadcast), or [Sign a Sui tx](/guides/sign-a-sui-tx) for the same flow on a
+non-EVM chain (`deriveSuiAddress`, BCS, GraphQL).
 
 ## What this unlocks
 
@@ -102,7 +110,7 @@ A Solana PDA is, cryptographically, the owner of the foreign UTXO or account.
 No wrapper, no bridge message, no custodian in the path. That single primitive
 lets you build:
 
-- **Native BTC / ETH vaults** controlled by Solana program logic.
+- **Native BTC / ETH / SUI vaults** controlled by Solana program logic.
 - **Smart-contract wallets** for autonomous agents that must sign external-chain
   transactions without a human in the loop.
 - **Cross-chain DeFi** where a Solana strategy directly spends Bitcoin or
@@ -131,6 +139,10 @@ lets you build:
   </Cards.Card>
   <Cards.Card title="Use the SDK" href="/guides/sign-an-eth-tx">
     Sign a Sepolia transaction end-to-end with `@soda-sdk/core` in TypeScript.
+  </Cards.Card>
+  <Cards.Card title="Sign a Sui tx" href="/guides/sign-a-sui-tx">
+    The second chain family. Same key, same `soda` program, BCS + blake2b
+    instead of RLP + keccak.
   </Cards.Card>
   <Cards.Card title="AI agents" href="/agents">
     One-command install for Claude Code, Codex, and Cursor. Your agent learns the live API.
