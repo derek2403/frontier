@@ -121,6 +121,19 @@ function loadSolanaWallet(): Keypair {
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, "utf8"))));
 }
 
+/**
+ * Who owns the foreign address, which is what the SigRequest PDA is seeded
+ * by. Defaults to the CLI wallet, because that is what the wallet-owned
+ * demos use. VERIFY_REQUESTER audits a run whose owner was somebody else:
+ * a Phantom wallet from the web app, or a program's PDA from the vault
+ * demo, where no wallet is involved at all.
+ */
+function resolveRequester(fallback: PublicKey): { key: PublicKey; source: string } {
+  const override = process.env.VERIFY_REQUESTER?.trim();
+  if (override) return { key: new PublicKey(override), source: "VERIFY_REQUESTER" };
+  return { key: fallback, source: "your CLI wallet" };
+}
+
 function check(label: string, ok: boolean, detail?: string) {
   const mark = ok ? `${C.green}✓$${C.reset}` : `${C.red}✗$${C.reset}`;
   const status = ok ? `${C.green}MATCH$${C.reset}` : `${C.red}MISMATCH$${C.reset}`;
@@ -227,11 +240,12 @@ async function main() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ethDemoProgram = new Program(ethDemoIdl as any, provider);
 
+  const requester = resolveRequester(walletKp.publicKey);
   const [sigRequestPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("sig"), walletKp.publicKey.toBuffer(), Buffer.from(payload)],
+    [Buffer.from("sig"), requester.key.toBuffer(), Buffer.from(payload)],
     sodaProgram.programId,
   );
-  console.log(`  requester:    ${walletKp.publicKey.toBase58()}  ${C.dim}(your CLI wallet)${C.reset}`);
+  console.log(`  requester:    ${requester.key.toBase58()}  ${C.dim}(${requester.source})${C.reset}`);
   console.log(`  sig_request:  ${sigRequestPda.toBase58()}`);
   console.log(`  ${C.dim}explorer:     ${explorerUrl(cluster, "account", sigRequestPda.toBase58())}$${C.reset}`);
 

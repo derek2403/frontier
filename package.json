@@ -25,7 +25,8 @@
     "mpc:up": "docker compose -f docker-compose.mpc.yml up --build",
     "mpc:down": "docker compose -f docker-compose.mpc.yml down",
     "mpc:update-committee": "pnpm --filter mpc-node exec tsx scripts/update-committee.ts ../../apps/mpc-node/shares/share-p1.json",
-    "mpc:subscribe": "pnpm --filter mpc-subscriber dev"
+    "mpc:subscribe": "pnpm --filter mpc-subscriber dev",
+    "demo:vault": "pnpm --filter demo demo:vault"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
