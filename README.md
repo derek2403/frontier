@@ -302,8 +302,10 @@ re-derive from on-chain state. The differences:
 | Host chain | NEAR | Solana |
 | Address derived on chain from the caller | Yes | Yes, via the `secp256k1_recover` trick |
 | Signature verified on chain before it is accepted | Yes, in the MPC contract's `respond` | Yes, `secp256k1_recover` in `finalize_signature` |
-| Committee today | 5-of-8 (cait-sith), independent operators | 2-of-2 (Lindell '17), one operator |
-| Status | Mainnet | Devnet + testnets |
+| Committee today | 9-of-15 on mainnet, 15 named operators voted in on-chain | 2-of-2 (Lindell '17), one operator |
+| Operator hardware | Intel TDX bare metal via dstack, attested to the contract; required on testnet, not yet on mainnet | Plain hosts |
+| Derivation inside the protocol | Additive shares; the tweak is folded into the presignature | Not yet (see security model) |
+| Status | Mainnet since 2024, four Trail of Bits audits | Devnet + testnets |
 
 The primitive is the same. What SODA adds is that it lives on Solana: a
 Solana program can request a foreign-chain signature by CPI, the request and
