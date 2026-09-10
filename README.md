@@ -9,7 +9,7 @@ second wallet, no ETH to hold. The user only ever touches SOL.
 
 - Live demo: <https://frontier-web-five.vercel.app> (Solana devnet → Base Sepolia)
 - Docs: <https://frontier-docs-cazz.vercel.app>
-- Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`, `sui_demo` `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`
+- Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`, `sui_demo` `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`, `vault_demo` `2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE`
 
 ---
 
@@ -67,6 +67,14 @@ contracts. A contract cannot click "Sign", and until now that meant every
 autonomous vault, agent or scheduled strategy on Solana had to hand its
 foreign-chain keys to a SaaS custodian.
 
+`contracts/programs/vault_demo/` is that, working. A vault PDA owns
+`0x18704c316eae06d87982231a319f8d20ba4da5ea` on Base Sepolia, a different
+address from the one the same wallet owns, and it will only ever pay the
+one recipient recorded when it was created. Ask it to pay anyone else and
+Solana refuses before a signature exists. That rule is not a policy in a
+client or a promise from a custodian; it is a `require!` in a program, and
+no key exists that could override it.
+
 ## What works today
 
 Everything below is reproducible with the commands further down, and every
@@ -81,6 +89,7 @@ Sepolia for the EVM rows, Sui testnet for the Sui ones.
 | Broadcast | Base Sepolia | The signed transaction is sent. |
 | Act | Aave V3 | `depositETH` puts ETH into Aave; the Solana wallet's address receives aWETH and earns interest. `Pool.borrow` takes USDC out against that collateral. |
 | Audit | `pnpm verify <hash>` | Anyone can tie the broadcast transaction back to the Solana request in eight checks, using only public state. |
+| Own it from a program | Solana, `vault_demo` → `soda` | `pnpm demo:vault`: a PDA, not a wallet, is the requester, so the address belongs to the program. The vault records one allowed recipient and refuses to sign a payment to anyone else. |
 | Sui | Solana, `sui_demo` → `soda`, then Sui testnet | `DEMO_CHAIN=sui-testnet ./demo.sh`: the program derives the wallet's Sui address, BCS-encodes the exact Sui transaction from it on-chain, commits `sha256(blake2b(intent ‖ tx))`, and the same `finalize_signature` verifies the committee's signature. The signed bytes go to Sui over GraphQL; `pnpm verify:sui <digest>` audits the result. The encoders are held byte-for-byte against `@mysten/sui` in tests. |
 | Act (Sui) | DeepBook V3 | The derived address trades on Sui's on-chain central limit order book: `swap_exact_quote_for_base` buys DEEP with SUI, `swap_exact_base_for_quote` sells it back. The pool is whitelisted, so fees are zero and no DEEP is needed to trade. |
 
@@ -411,6 +420,7 @@ cryptographic audit of the transaction it just broadcast:
 DEMO_ACTION=borrow ./demo.sh       # Aave Pool.borrow, 0.1 USDC against the aWETH
 DEMO_CHAIN=base-sepolia ./demo.sh  # sepolia | base-sepolia
 DEMO_CHAIN=sui-testnet ./demo.sh   # Sui: buy DEEP on DeepBook (sui-testnet | sui-devnet)
+pnpm demo:vault                    # a PROGRAM owns the address, and may pay only one recipient
 DEMO_ACTION=sell DEMO_CHAIN=sui-testnet ./demo.sh    # sell that DEEP back for SUI
 DEMO_ACTION=transfer DEMO_CHAIN=sui-testnet ./demo.sh  # plain SUI transfer
 ```
@@ -452,6 +462,8 @@ pnpm sdk:test                                  # TS derivation, RLP, Aave callda
 contracts/programs/soda/       the primitive: init/update committee, request_signature
                                (derives on chain), finalize_signature (secp256k1_recover)
 contracts/programs/eth_demo/   example caller: builds the EVM tx, hashes it, CPIs soda
+contracts/programs/vault_demo/ example caller owned by a PDA: the template for a
+                               program that owns a foreign address under its own rules
 contracts/programs/sui_demo/   Sui caller: derives the sender, BCS-encodes, blake2b (no syscall) + sha256, CPIs soda
 packages/soda-sdk/             TypeScript: derivation, RLP, chain registry, Aave calldata,
                                sui.ts (address, BCS, hashes, signature envelope, GraphQL client)

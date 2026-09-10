@@ -13,16 +13,21 @@ and `soda`. The address is computed from the caller's identity alone.
 ## The formula
 
 ```
-tweak       = sha256("SODA-v1" || program_id || seeds || chain_tag)
+tweak       = sha256("SODA-v1" || owner || path || chain_tag)
 foreign_pk  = group_pk + tweak · G
 foreign_addr = address_encoding(foreign_pk, chain_tag)
 ```
 
 Where:
 
-- `program_id` is the calling Solana program (e.g., `eth_demo` or any user program).
-- `seeds` are arbitrary per-request bytes (analogous to PDA seeds: a vault id,
-  a strategy index, a user pubkey).
+- `owner` is the Solana account that SIGNS the request, which `soda` reads
+  from `requester.key()`. A wallet signing for itself is the owner of its own
+  address; a program signing for its PDA with `invoke_signed` makes that PDA
+  the owner. It is not the calling program's id: an earlier design keyed the
+  tweak that way, and every caller then landed on the same address.
+- `path` is arbitrary per-request bytes, so one owner can hold several
+  addresses (a vault id, a strategy index, a user pubkey). Empty is the
+  owner's default account.
 - `chain_tag` selects the foreign chain (`ETH_SEPOLIA`, `ETH_MAINNET`,
   `BTC_TESTNET`, etc.).
 - `group_pk` is the committee's aggregate public key on the secp256k1 curve.
@@ -58,6 +63,33 @@ So a signature produced with `sk'` recovers to `foreign_pk` under the foreign
 chain's standard signature verification. From Bitcoin or Ethereum's point of
 view, a normal ECDSA signature signed a normal transaction. The chain has no
 idea Solana exists.
+
+## A program can be the owner
+
+Because the tweak is keyed on whoever signed, and a PDA signing through
+`invoke_signed` is a signer, a Solana **program** owns a foreign address by
+the same formula a wallet does. Nothing in `soda` is special-cased for it.
+
+```rust
+let vault_seeds: &[&[u8]] = &[b"vault", authority.as_ref(), &id, &[bump]];
+let cpi = CpiContext::new_with_signer(
+    soda_program, RequestSignature {
+        requester: vault.to_account_info(),   // the PDA owns the address
+        payer:     authority.to_account_info(), // a wallet pays the rent
+        ..
+    }, &[vault_seeds]);
+soda::cpi::request_signature(cpi, path, payload, chain_tag, 0)?;
+```
+
+`requester` and `payer` are separate accounts precisely so this works: a
+program-owned address would otherwise have to hold lamports before it could
+ask for its first signature.
+
+The consequence is the point of the whole system. The address moves only
+when the program's own rules allow it, and those rules are enforced by
+Solana rather than promised by whoever holds a key.
+`contracts/programs/vault_demo/` is a worked example: a vault that records
+one allowed recipient and refuses to sign a payment to anyone else.
 
 ## Domain separation
 

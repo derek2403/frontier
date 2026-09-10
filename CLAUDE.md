@@ -433,6 +433,50 @@ pnpm sdk:test                                  # 10 TS parity tests
   there's no real broadcast). Judges/viewers see the cryptographic audit
   without needing to copy/paste a hash between commands.
 
+## A program owns a foreign address — added 2026-09-11
+
+The claim that made this project interesting ("a Solana program can own a
+Bitcoin or Ethereum address and act on it by CPI, with no human and no
+custodian") was documented everywhere and implemented nowhere. Before this
+change `invoke_signed` appeared exactly once in `contracts/`, inside a
+comment, and both callers passed a wallet as the requester. It is now real
+and run on devnet.
+
+**The one change to `soda`:** `RequestSignature` splits `payer` from
+`requester`. The requester is the OWNER of the derived address and is no
+longer `mut`; a separate `payer` funds the `SigRequest` rent. Conflating
+them meant a program-owned address had to hold lamports before it could ask
+for its first signature. `eth_demo` and `sui_demo` pass `user` twice, so
+their own account lists and clients did not change. `Committee` and
+`SigRequest` state layouts are untouched, so the live committee, `group_pk`
+and every existing derived address survived the upgrade.
+
+| Component | Path | Run | What it does |
+|---|---|---|---|
+| **vault_demo** | `contracts/programs/vault_demo/` | `pnpm demo:vault` | `2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE`, live on devnet. A `Vault` PDA at `[b"vault", authority, vault_id]` owns an EVM address. `init_vault` records ONE allowed recipient; `vault_sign_eth_transfer` builds the RLP (reusing `eth_demo::eth_rlp`), refuses any other recipient, and CPIs `request_signature` with `CpiContext::new_with_signer` so the PDA is the requester. 5 unit tests. |
+| **vault demo script** | `apps/demo/src/demo-vault.ts` | `pnpm demo:vault` | Derives the vault's address, contrasts it with the wallet's, funds it, signs, broadcasts, then asks the vault to pay a different address and shows the on-chain refusal. |
+| **verify** | `apps/demo/src/verify.ts` | `VERIFY_REQUESTER=<pubkey> pnpm verify <hash>` | The EVM audit tool now takes a requester override, so a run owned by a PDA (or a Phantom wallet on the web) can be audited. It previously assumed the CLI wallet. |
+
+Verified on devnet + Base Sepolia 2026-09-11, `vault_id 0` under authority
+`D5pwjGzq…`:
+- Vault PDA `FPRSKXnzUD98ZxRigdQppaUiRm2L2nEGA8WGCSMvixhS` owns `0x18704c316eae06d87982231a319f8d20ba4da5ea`, a different address from the `0xd552…1ce5` the same wallet owns. Same committee, same chain, different owner.
+- `SigRequest.requester` is the PDA, not the wallet. Transfer broadcast: `0x44b62e9dc4509811ec07cd2eac4d8e779c216bcedfa4931363cc1dd312c170d8`, audited with `VERIFY_REQUESTER=FPRSKXnz…` and every check MATCH.
+- The negative test is part of the run: asking the vault to pay `0x…deadbeef` aborts with `RecipientNotAllowed`, so no signature is ever produced.
+- Both existing demos re-run clean after the upgrade (Aave deposit `0xa3f24d02…`, DeepBook swap `APPGT6v3…`).
+
+**Deploy gotcha worth remembering.** `soda` and `sui_demo` failed to upgrade
+with `Error processing Instruction 2: invalid program argument`. The cause
+is that their program-data accounts were allocated at exactly the original
+binary size, so any growth fails. Fix is
+`solana program extend <program_id> 50000 --url <devnet>` before
+redeploying; each extension cost about 0.25 SOL. `eth_demo` had headroom and
+upgraded fine, which is why only two of four failed.
+
+Also corrected: `apps/docs/pages/concepts/derivation.mdx` still described
+the pre-refactor design where the tweak was keyed on the calling program's
+id. It is keyed on the signer. That stale text is the same root confusion
+behind the MPC authorization bug noted below.
+
 ## Sui: second chain family — added 2026-09-10
 
 Same primitive, same `soda` program, same committee key, same
