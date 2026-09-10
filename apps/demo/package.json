@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "demo": "tsx src/demo.ts",
-    "verify": "tsx src/verify.ts"
+    "demo:sui": "tsx src/demo-sui.ts",
+    "verify": "tsx src/verify.ts",
+    "verify:sui": "tsx src/verify-sui.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
