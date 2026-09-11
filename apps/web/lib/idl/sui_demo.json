@@ -1,0 +1,439 @@
+{
+  "address": "9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug",
+  "metadata": {
+    "name": "sui_demo",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "SODA Sui demo harness — Sui transfer / PTB via CPI to soda"
+  },
+  "instructions": [
+    {
+      "name": "sign_sui_transfer",
+      "docs": [
+        "Send `amount_mist` of SUI from the signer's derived Sui address to",
+        "`recipient`. The program builds the whole transaction — the PTB, the",
+        "sender, the gas envelope — so the caller supplies only the recipient,",
+        "the amount and the gas coins it read from a Sui node. What Phantom",
+        "shows is what will happen."
+      ],
+      "discriminator": [
+        9,
+        143,
+        214,
+        125,
+        44,
+        125,
+        141,
+        222
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "committee",
+          "docs": [
+            "soda's committee PDA, read for `group_pk` so the sender can be derived",
+            "here. Owner and seeds are checked against the soda program."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                169,
+                29,
+                198,
+                206,
+                138,
+                192,
+                163,
+                85,
+                134,
+                4,
+                213,
+                172,
+                138,
+                14,
+                232,
+                39,
+                129,
+                162,
+                251,
+                121,
+                90,
+                74,
+                197,
+                102,
+                217,
+                249,
+                136,
+                175,
+                211,
+                202,
+                148,
+                245
+              ]
+            }
+          }
+        },
+        {
+          "name": "sig_request",
+          "writable": true
+        },
+        {
+          "name": "soda_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "recipient",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "amount_mist",
+          "type": "u64"
+        },
+        {
+          "name": "gas_payment",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "SuiObjectRef"
+              }
+            }
+          }
+        },
+        {
+          "name": "gas_price",
+          "type": "u64"
+        },
+        {
+          "name": "gas_budget",
+          "type": "u64"
+        },
+        {
+          "name": "chain_tag",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "derivation_seeds",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "sign_sui_tx",
+      "docs": [
+        "Any Sui transaction. `kind_bytes` is a BCS `TransactionKind` holding a",
+        "ProgrammableTransaction (for example `@mysten/sui`'s",
+        "`Transaction.build({ onlyTransactionKind: true })`); the program wraps",
+        "it in the same envelope as above. Move calls, DeFi, NFTs — the",
+        "primitive does not interpret the commands. It guarantees only that",
+        "the signer authorised exactly these bytes and that the derived",
+        "address is the sender."
+      ],
+      "discriminator": [
+        150,
+        229,
+        156,
+        72,
+        173,
+        185,
+        42,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "committee",
+          "docs": [
+            "soda's committee PDA, read for `group_pk` so the sender can be derived",
+            "here. Owner and seeds are checked against the soda program."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  116,
+                  101,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                169,
+                29,
+                198,
+                206,
+                138,
+                192,
+                163,
+                85,
+                134,
+                4,
+                213,
+                172,
+                138,
+                14,
+                232,
+                39,
+                129,
+                162,
+                251,
+                121,
+                90,
+                74,
+                197,
+                102,
+                217,
+                249,
+                136,
+                175,
+                211,
+                202,
+                148,
+                245
+              ]
+            }
+          }
+        },
+        {
+          "name": "sig_request",
+          "writable": true
+        },
+        {
+          "name": "soda_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "kind_bytes",
+          "type": "bytes"
+        },
+        {
+          "name": "gas_payment",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "SuiObjectRef"
+              }
+            }
+          }
+        },
+        {
+          "name": "gas_price",
+          "type": "u64"
+        },
+        {
+          "name": "gas_budget",
+          "type": "u64"
+        },
+        {
+          "name": "chain_tag",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "derivation_seeds",
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Committee",
+      "discriminator": [
+        96,
+        136,
+        210,
+        244,
+        137,
+        110,
+        178,
+        104
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "SuiTxRequested",
+      "discriminator": [
+        124,
+        23,
+        98,
+        77,
+        117,
+        48,
+        237,
+        208
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotProgrammable",
+      "msg": "kind_bytes must be a BCS ProgrammableTransaction (first byte 0x00)"
+    },
+    {
+      "code": 6001,
+      "name": "KindTooLong",
+      "msg": "kind_bytes exceeds MAX_KIND_LEN"
+    },
+    {
+      "code": 6002,
+      "name": "BadGasPayment",
+      "msg": "gas_payment must hold between 1 and MAX_GAS_COINS object refs"
+    }
+  ],
+  "types": [
+    {
+      "name": "Committee",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "group_pk",
+            "type": {
+              "array": [
+                "u8",
+                33
+              ]
+            }
+          },
+          {
+            "name": "signer_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SuiObjectRef",
+      "docs": [
+        "An owned object the transaction pays gas with. `digest` is the 32 bytes",
+        "behind the base58 string a Sui node prints."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "object_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          },
+          {
+            "name": "digest",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SuiTxRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "sig_request",
+            "type": "pubkey"
+          },
+          {
+            "name": "sender",
+            "docs": [
+              "The derived Sui address the transaction is from."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "tx_bytes",
+            "docs": [
+              "BCS `TransactionData`: sign, attach `0x01 || sig || pk`, submit."
+            ],
+            "type": "bytes"
+          }
+        ]
+      }
+    }
+  ]
+}

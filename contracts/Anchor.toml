@@ -9,6 +9,8 @@ skip-lint = false
 [programs.localnet]
 eth_demo = "9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx"
 soda = "CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J"
+sui_demo = "9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug"
+vault_demo = "2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE"
 
 [registry]
 url = "https://api.apr.dev"

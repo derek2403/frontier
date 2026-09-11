@@ -433,6 +433,118 @@ pnpm sdk:test                                  # 10 TS parity tests
   there's no real broadcast). Judges/viewers see the cryptographic audit
   without needing to copy/paste a hash between commands.
 
+## A program owns a foreign address — added 2026-09-11
+
+The claim that made this project interesting ("a Solana program can own a
+Bitcoin or Ethereum address and act on it by CPI, with no human and no
+custodian") was documented everywhere and implemented nowhere. Before this
+change `invoke_signed` appeared exactly once in `contracts/`, inside a
+comment, and both callers passed a wallet as the requester. It is now real
+and run on devnet.
+
+**The one change to `soda`:** `RequestSignature` splits `payer` from
+`requester`. The requester is the OWNER of the derived address and is no
+longer `mut`; a separate `payer` funds the `SigRequest` rent. Conflating
+them meant a program-owned address had to hold lamports before it could ask
+for its first signature. `eth_demo` and `sui_demo` pass `user` twice, so
+their own account lists and clients did not change. `Committee` and
+`SigRequest` state layouts are untouched, so the live committee, `group_pk`
+and every existing derived address survived the upgrade.
+
+| Component | Path | Run | What it does |
+|---|---|---|---|
+| **vault_demo** | `contracts/programs/vault_demo/` | `pnpm demo:vault` | `2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE`, live on devnet. A `Vault` PDA at `[b"vault", authority, vault_id]` owns an EVM address. `init_vault` records ONE allowed recipient; `vault_sign_eth_transfer` builds the RLP (reusing `eth_demo::eth_rlp`), refuses any other recipient, and CPIs `request_signature` with `CpiContext::new_with_signer` so the PDA is the requester. 5 unit tests. |
+| **vault demo script** | `apps/demo/src/demo-vault.ts` | `pnpm demo:vault` | Derives the vault's address, contrasts it with the wallet's, funds it, signs, broadcasts, then asks the vault to pay a different address and shows the on-chain refusal. |
+| **verify** | `apps/demo/src/verify.ts` | `VERIFY_REQUESTER=<pubkey> pnpm verify <hash>` | The EVM audit tool now takes a requester override, so a run owned by a PDA (or a Phantom wallet on the web) can be audited. It previously assumed the CLI wallet. |
+
+Verified on devnet + Base Sepolia 2026-09-11, `vault_id 0` under authority
+`D5pwjGzq…`:
+- Vault PDA `FPRSKXnzUD98ZxRigdQppaUiRm2L2nEGA8WGCSMvixhS` owns `0x18704c316eae06d87982231a319f8d20ba4da5ea`, a different address from the `0xd552…1ce5` the same wallet owns. Same committee, same chain, different owner.
+- `SigRequest.requester` is the PDA, not the wallet. Transfer broadcast: `0x44b62e9dc4509811ec07cd2eac4d8e779c216bcedfa4931363cc1dd312c170d8`, audited with `VERIFY_REQUESTER=FPRSKXnz…` and every check MATCH.
+- The negative test is part of the run: asking the vault to pay `0x…deadbeef` aborts with `RecipientNotAllowed`, so no signature is ever produced.
+- Both existing demos re-run clean after the upgrade (Aave deposit `0xa3f24d02…`, DeepBook swap `APPGT6v3…`).
+
+**Deploy gotcha worth remembering.** `soda` and `sui_demo` failed to upgrade
+with `Error processing Instruction 2: invalid program argument`. The cause
+is that their program-data accounts were allocated at exactly the original
+binary size, so any growth fails. Fix is
+`solana program extend <program_id> 50000 --url <devnet>` before
+redeploying; each extension cost about 0.25 SOL. `eth_demo` had headroom and
+upgraded fine, which is why only two of four failed.
+
+Also corrected: `apps/docs/pages/concepts/derivation.mdx` still described
+the pre-refactor design where the tweak was keyed on the calling program's
+id. It is keyed on the signer. That stale text is the same root confusion
+behind the MPC authorization bug noted below.
+
+## Sui: second chain family — added 2026-09-10
+
+Same primitive, same `soda` program, same committee key, same
+`finalize_signature`. Sui accepts secp256k1 natively (signature scheme flag
+`0x01`), so a Solana wallet's derived key is a first-class Sui account. What
+changes is the envelope, and all of it lives outside `soda`:
+
+```
+address  = blake2b256(0x01 ‖ compressed_pk)                     (not keccak)
+tx bytes = BCS TransactionData::V1 { kind, sender, gas_data, expiration }
+payload  = sha256(blake2b256(intent(0,0,0) ‖ tx bytes))          ← what soda stores
+sig      = base64(0x01 ‖ r ‖ s ‖ compressed_pk)                  (98 bytes)
+digest   = base58(blake2b256("TransactionData::" ‖ tx bytes))    (what Suiscan shows)
+```
+
+| Component | Path | Run | Notes |
+|---|---|---|---|
+| **sui_demo program** | `contracts/programs/sui_demo/` | `DEMO_CHAIN=sui-testnet ./demo.sh` | `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`, **live on devnet** (deployed 2026-09-10, authority `D5pwjGzq…`). `sign_sui_transfer(recipient, amount_mist, gas_payment[], gas_price, gas_budget, chain_tag, seeds)` builds the split-and-transfer PTB; `sign_sui_tx(kind_bytes, …)` wraps any BCS `TransactionKind` and is what the DeepBook actions use. Both derive the SENDER on-chain (Sui signs over it), BCS-encode the envelope, hash with a hand-written blake2b (`src/blake2b.rs`, no syscall exists) + the sha256 syscall, CPI `request_signature`, emit `SuiTxRequested { sig_request, sender, tx_bytes }`. 12 Rust unit tests: blake2b vectors from `@noble/hashes`, BCS/hash vectors from `@mysten/sui`. |
+| **SDK Sui module** | `packages/soda-sdk/src/sui.ts` | `pnpm sdk:test` | Registry (`SUI_CHAINS`, `getSuiChain`, `suiGraphqlUrl`), address, envelope encoder, hashing, signature envelope, local-key helpers, `SuiGraphQl` client, faucet helper. `chains.ts` gained `chainFamily(key)`. |
+| **SDK PTB encoder** | `packages/soda-sdk/src/sui-ptb.ts` | `pnpm sdk:test` | A small BCS encoder for programmable blocks (inputs, commands, arguments, Move type tags). The Sui counterpart of `rlp.ts`: it exists so the published package keeps its `@noble/*`-only dependency list instead of shipping `@mysten/sui`. |
+| **SDK DeepBook module** | `packages/soda-sdk/src/deepbook.ts` | `pnpm sdk:test` | The Sui counterpart of `aave.ts`: pool/coin constants, `deepbookBuyBaseKind`, `deepbookSellBaseKind`, `deepbookQuoteKind` + `decodeDeepbookQuote` + `quoteRejection`, slippage and formatting. |
+| **CLI demo** | `apps/demo/src/demo-sui.ts` | `pnpm demo:sui` | Mirrors `demo.ts`: derive → fund (`SUI_FUNDER_KEY` sponsor, else faucet) → gas coins + reference gas price → quote → build/simulate → `sign_sui_tx` → sign → `finalize_signature` → `executeTransaction`. `DEMO_ACTION=swap` (default) `| sell | transfer`. |
+| **verify tool** | `apps/demo/src/verify-sui.ts` | `pnpm verify:sui <digest>` | Same audit as `verify.ts` for a Sui digest; `VERIFY_REQUESTER=<pubkey>` audits a web (Phantom) run. Resolves its network from `DEMO_CHAIN` only when that names a Sui chain, else `SUI_CHAIN`, else testnet — the repo's `.env` sets `DEMO_CHAIN=base-sepolia`, which used to make the bare command throw. |
+| **relayer** | `apps/relayer/` | `pnpm relayer:dev` | Second assembler path: caches `SuiTxRequested`, and on `SigCompleted` recovers the pubkey from (payload, sig, recovery_id), checks it hashes to the cached sender, and submits via `executeTransaction`. `SUI_CHAIN` picks the network. Skips Sui with a warning if `contracts/target/idl/sui_demo.json` is absent. |
+| **demo.sh** | `demo.sh` | `DEMO_CHAIN=sui-*` | Routes sui-* keys to `demo:sui` / `verify:sui` and only deploys the program that is missing (`anchor deploy --program-name`). Values set on the command line now beat `.env`, and only the keys `.env` defines are snapshotted (replaying a whole `export -p` aborts under `set -e` in a shell that exports readonly `SHELLOPTS`). |
+
+### DeepBook: what the Sui demo actually does
+
+The headline action is not a transfer. The derived address trades on **DeepBook
+V3**, Sui's on-chain central limit order book, on the **DEEP/SUI** pool
+(`0x48c95963…ae9f`, package `0xd874d241…bb24`). That pool is *whitelisted*:
+taker and maker fees are zero and no DEEP is needed to pay fees, so the demo
+does not inherit a second funding problem on top of gas. A `coin::zero<DEEP>`
+is passed as the fee input.
+
+| Action | Move call | Kind bytes | What it proves |
+|---|---|---|---|
+| `swap` (default) | `pool::swap_exact_quote_for_base<DEEP,SUI>` | 427 | The address takes liquidity off a real book and ends up holding a token it never had. Quote coin is split off the gas coin, so only SUI is needed. |
+| `sell` | `pool::swap_exact_base_for_quote<DEEP,SUI>` | 567 | It spends **owned coin objects it acquired itself**, not gas it was given. The Sui analogue of the Aave borrow. |
+
+Quoting is a read-only programmable block (`mid_price`,
+`get_{base,quote}_quantity_out`, `whitelisted`) run through
+`simulateTransaction`, whose `outputs { returnValues { value { json } } }`
+carries the Move return values. That is the Sui equivalent of the EVM
+demo's `eth_estimateGas` pre-check, and it is where `min_out` comes from
+(1% slippage). It matters because a DeepBook swap below the pool minimum
+(10 DEEP) does **not** revert — it returns the input untouched — so "would
+this fill?" has to be asked explicitly.
+
+Facts verified 2026-09-10:
+- **Both DeepBook actions ran end to end**, Solana devnet → Sui testnet, each audited by `pnpm verify:sui` with every check MATCH. Buy: 0.5 SUI → 19 DEEP, digest `38myk9NxEb4hpwooEzTX5aiY5kqgVvn5BuFgLbFUxLmR`. Sell: 19 DEEP → 0.478990 SUI, digest `5XApu3HLMQLUNDoLVBWvYkafifuXG1r2pQT1MzAqZ8qU`. Balance trail 5.018002 → 4.523790 (+19 DEEP) → 4.997409 SUI.
+- The hand-rolled PTB encoder is byte-identical to `@mysten/deepbook-v3` v2.3.0's own output and to `@mysten/sui`'s independent encoder. 61 vitest cases across the SDK.
+- `MAX_KIND_LEN` is **640**, not a round 768: `kind_bytes` is raw instruction data that no address lookup table can compress, and with `MAX_GAS_COINS = 4` a larger block cannot fit Solana's 1232-byte transaction. The live swap's Solana transaction carried a 427-byte kind.
+- Mysten's public fullnodes answer JSON-RPC with "deprecated, migrate to gRPC or GraphQL"; the client uses `https://graphql.testnet.sui.io/graphql` (CORS `*`, so the browser can call it). Alchemy's Sui endpoint (`SUI_TESTNET_RPC_URL` in `.env`) still serves JSON-RPC and is what `@mysten/*` tooling needs; SODA itself only needs GraphQL. In this schema `objects(filter:{type})` yields `MoveObject` nodes (use `contents { json }` directly), `signatures.scheme` is a union (not requested), `simulateTransaction(transaction: { bcs: { value } })` takes a full `TransactionData`, `executeTransaction(transactionDataBcs, signatures)` waits for finality, and `transaction(digest).transactionBcs` is the bare `TransactionData`.
+- **Indexing lags finality.** `executeTransaction` returns when the transaction is final, but reading it back by digest can 404 for a few seconds, which is why `verify:sui` polls. Mysten documents this on the mutation itself.
+- `faucet.testnet.sui.io/v2/gas` rate-limits with a shared bucket ("Wait for Ns" that keeps moving). Retrying on the advertised deadline never got through; the sponsor key is the reliable path and the web faucet (`faucet.sui.io`) is the human fallback.
+- Derived Sui address of the laptop wallet `D5pwjGzq…` under the current committee key and the `sui-testnet` tag: `0x7b117f9d1a245c001a4b8c8979b4bf4857fb97d96c0daf3ba3a24bd71131eaee`.
+- Sponsor (`SUI_FUNDER_KEY` in `.env`) is the user's own key, **Ed25519** `0xb9b81ffd9f29aefd39042bf4a75e764b99c72621907d04a1f404bfa74426535d`, ~36 SUI. `parseSuiPrivateKey` accepts either a `suiprivkey1…` export (Ed25519 or secp256k1, bech32) or 32 bytes of secp256k1 hex, and `signSuiTransactionWithKey` dispatches on the scheme — Ed25519 signs the intent digest directly, secp256k1 signs sha256 of it.
+
+Not changed for Sui: the Rust signer daemon. The MPC nodes and subscriber are
+also untouched, but note that MPC mode cannot authorize *any* request today,
+EVM or Sui: `apps/mpc-node/src/authorize.ts` derives the tweak from a
+`SODA_KNOWN_REQUESTERS` program id while the chain derives it from
+`requester.key()` (the signing wallet), so no candidate ever reproduces the
+stored `foreign_pk_xy`. That is on top of the already-documented `tweakHex`
+bug, which would defeat MPC mode even once the authorization keying is
+fixed.
+
 ## AWS MPC committee — DECOMMISSIONED 2026-09-07
 
 **Do not trust the IPs below.** The instances are gone. Probing
@@ -556,6 +668,65 @@ bash scripts/deploy-mpc-aws.sh
 - **EC2 security groups don't open MPC ports by default.** Required three manual
   console edits (see "Security group rules added"). Worth scripting via AWS CLI
   next time.
+
+## Web demo on Vercel — added 2026-09-09
+
+`apps/web` auto-deploys to the Vercel project `frontier-web` on every push
+to `main` (GitHub integration; no `vercel.json`, no CLI on the laptop). The
+docs page `apps/docs/pages/deploy/vercel-web.mdx` lists the env vars;
+`apps/web/.env.example` is the canonical commented list.
+
+What broke on 2026-09-08 and what now guards against it:
+
+- **Chain was split across two variables.** Browser read
+  `NEXT_PUBLIC_DEMO_CHAIN`, API routes read `DEMO_CHAIN`. Now
+  `apps/web/lib/chain.ts` makes the server fall back to the public one, the
+  browser sends `chain` on every API call and the server 400s on a mismatch,
+  and `/api/group-pk` reports the server chain so the page shows a
+  "Deployment misconfigured" banner at load.
+- **Signing backend was advertised from a `NEXT_PUBLIC_` copy** that still
+  pointed at the dead AWS coordinator. Removed; `/api/group-pk` now reports
+  `signer` from the server's real `MPC_COORDINATOR_URL`.
+- **`/api/finalize` needed `keyshare.dev.json` on disk** and silently
+  generated a random key when it was missing — guaranteed `PubkeyMismatch`
+  on Vercel. Now: `SODA_SIGNER_KEY_HEX` env first, file second, hard error
+  third, and the route checks the key's pubkey against the on-chain
+  `Committee.group_pk` before signing.
+- **A dead `MPC_COORDINATOR_URL` hung until the function timeout.** The
+  fetch now has a 90s `AbortSignal.timeout` and names the host in the error.
+
+Local `apps/web/.env` and root `.env` are on `DEMO_CHAIN=base-sepolia`: the
+Alchemy app the user has only serves Base Sepolia + Solana devnet, not
+Ethereum Sepolia. On-chain committee `group_pk` (`02062edf…`) matches the
+laptop's `keyshare.dev.json`; authority is the laptop wallet `D5pwjGzq…`.
+
+## Aave actions: deposit + borrow — added 2026-09-09
+
+The demo has two EVM actions, both one transaction through the identical
+pipeline; only the calldata differs. `packages/soda-sdk/src/aave.ts` holds
+the addresses (from bgd-labs/aave-address-book), calldata builders, and the
+`getUserAccountData` / `getReserveData` decoders the web page uses to show
+Aave's own view of the derived address.
+
+| Action | Contract call | Gas (measured → limit) | CLI | Web |
+|---|---|---|---|---|
+| deposit (default) | `WrappedTokenGatewayV3.depositETH`, 0.0001 ETH | 229,989 → 300k | `./demo.sh` | step 3, left button |
+| borrow | `Pool.borrow(USDC, 0.1, variable, 0, derived)` | 288,022 → 400k | `DEMO_ACTION=borrow ./demo.sh` | step 3, right button |
+
+USDC on Base Sepolia's Aave market is Aave's test token
+`0xba50Cd2A…`, NOT Circle's `0x036C…` (which is not a reserve there).
+`ACTIONS` in `apps/web/pages/index.tsx` is the single per-action table in
+the web app; adding an action is a row.
+
+Both paths call `eth_estimateGas` from the derived address before touching
+Solana, so an Aave revert (no collateral, cap, paused) is reported with its
+reason instead of costing two Solana txs and burned gas.
+
+Verified 2026-09-09 on Base Sepolia from the laptop wallet's derived address
+`0xd552…1ce5`: borrow tx `0x732af17f…` succeeded, `pnpm verify` passed all
+checks, and Aave then reported 0.1 USDC held + 0.1 vUSDC debt against
+~$0.75 of aWETH collateral. `demo.sh`'s SOL gate now only demands 5 SOL when
+a deploy is needed (0.05 otherwise).
 
 ## Render MPC deployment — added 2026-09-05
 

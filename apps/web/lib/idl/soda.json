@@ -188,6 +188,24 @@
         },
         {
           "name": "requester",
+          "docs": [
+            "The OWNER of the foreign address: the account the tweak is keyed on.",
+            "A wallet signing for itself, or a program's PDA signing through",
+            "`invoke_signed`. Nothing else about the request depends on which."
+          ],
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Whoever pays the rent for the `SigRequest` account.",
+            "",
+            "Separate from `requester` because they are separate roles, and",
+            "conflating them made program ownership awkward: a PDA that owns a",
+            "foreign address would have had to hold lamports before it could ever",
+            "ask for a signature. A wallet requesting for itself simply passes",
+            "itself twice."
+          ],
           "writable": true,
           "signer": true
         },

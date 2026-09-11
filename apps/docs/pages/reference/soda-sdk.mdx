@@ -33,7 +33,9 @@ yarn add @soda-sdk/core
 ```
 
 The published package ships ESM + `.d.ts` from `dist/` (built with `tsup`).
-Two runtime deps come along: `@noble/curves` and `@noble/hashes`.
+Two runtime deps come along: `@noble/curves` and `@noble/hashes`. The Sui
+module has no extra dependency: `@mysten/sui` is a devDependency used only
+by the parity tests.
 
   </Tabs.Tab>
   <Tabs.Tab>
@@ -85,18 +87,87 @@ import {
   // RPC client
   EthRpc,
 
+  // Chain registry (EVM) + the family switch
+  CHAINS,
+  getChain,
+  chainById,
+  chainRpcUrl,
+  chainFamily,
+  type ChainFamily,
+  type ChainKey,
+  type EvmChain,
+  type EvmChainKey,
+
+  // Sui: registry, address, BCS, hashing, signature envelope, client
+  SUI_CHAINS,
+  getSuiChain,
+  suiGraphqlUrl,
+  compressPk,
+  suiAddressFromPk,
+  deriveSuiAddress,
+  encodeSuiTransferKind,
+  encodeSuiTransactionData,
+  suiIntentMessage,
+  suiIntentDigest,
+  suiSigningPayload,
+  suiTransactionDigest,
+  encodeSuiSignature,
+  decodeSuiSignature,
+  signSuiTransactionWithSecp256k1,
+  parseSuiPrivateKey,
+  suiPublicKeyFromKey,
+  suiAddressFromKey,
+  suiAddressFromEd25519Pk,
+  signSuiTransactionWithKey,
+  SuiGraphQl,
+  requestSuiFromFaucet,
+  parseSuiAddress,
+  bytesToHex0x,
+  toBase58,
+  fromBase58,
+  toBase64,
+  fromBase64,
+  bech32Decode,
+  type SuiChain,
+  type SuiChainKey,
+  type SuiObjectRef,
+  type SuiTxEnvelope,
+  type SuiCoin,
+  type SuiExecuteResult,
+  type SuiTransactionInfo,
+  type SuiSigningKey,
+
   // Constants
   DERIVATION_DOMAIN,
   ETH_SEPOLIA_CHAIN_TAG,
+  SUI_SECP256K1_FLAG,
+  SUI_ED25519_FLAG,
+  SUI_PRIVATE_KEY_HRP,
+  SUI_INTENT_TRANSACTION_DATA,
+  SUI_TX_DIGEST_PREFIX,
+  SUI_KIND_PROGRAMMABLE,
+  SUI_COIN_TYPE,
+  SUI_COIN_OBJECT_TYPE,
+  MIST_PER_SUI,
+  SUI_DEMO_AMOUNT_MIST,
+  SUI_TRANSFER_GAS_BUDGET_MIST,
+  SUI_MIN_BALANCE_MIST,
+  SUI_SPONSOR_MAX_TOPUP_MIST,
+  SUI_MAX_GAS_COINS,
 } from '@soda-sdk/core'
 ```
 
+The Aave calldata helpers (`depositEthCalldata`, `borrowCalldata`,
+`decodeUserAccountData`, …) are also exported from the same entrypoint; see
+`packages/soda-sdk/src/aave.ts`.
+
 ## Derivation
 
-### `computeTweak(programId, seeds, chainTag): Uint8Array`
+### `computeTweak(owner, seeds, chainTag): Uint8Array`
 
-Returns the 32-byte tweak: `sha256("SODA-v1" || programId || seeds || chainTag)`.
-All inputs are `Uint8Array`.
+Returns the 32-byte tweak: `sha256("SODA-v1" || owner || seeds || chainTag)`.
+All inputs are `Uint8Array`. `owner` is the 32-byte Solana account the
+request is signed by (a wallet, or a PDA signing via `invoke_signed`).
 
 ### `deriveForeignPk(groupPkCompressed, tweak): Uint8Array`
 
@@ -109,7 +180,7 @@ compressed committee pubkey.
 `keccak256(pk[1..])[12..]`. Returns 20 bytes. Pass through `0x` + hex if you
 want a string.
 
-### `deriveEthAddress(groupPkCompressed, programId, seeds, chainTag)`
+### `deriveEthAddress(groupPkCompressed, owner, seeds, chainTag)`
 
 Convenience wrapper. Returns:
 
@@ -180,6 +251,211 @@ console.log(rpc.endpoint)
 
 `addrHex` and `rawHex` should be `0x`-prefixed strings.
 
+## Chain registry
+
+Everything chain-specific lives in a registry so adding a chain is a new
+entry, not a hunt through the apps. EVM chains are in `chains.ts`; Sui
+chains sit next to their encoder in `sui.ts` (below).
+
+| Export | Behavior |
+| --- | --- |
+| `CHAINS: Record<EvmChainKey, EvmChain>` | `sepolia`, `base-sepolia`: chain id, `chainTag`, default RPC + env override, explorer URLs, Aave addresses, faucets |
+| `getChain(key)` | Resolve a `DEMO_CHAIN`-style key; unset = `sepolia`. Throws with a hint if you pass a Sui key |
+| `chainById(chainId)` | Look a chain up by the id recovered from an EIP-155 `v` |
+| `chainRpcUrl(chain, env?)` | Server-side RPC URL: `env[chain.rpcEnv]`, else `chain.defaultRpc` |
+| `chainFamily(key): "evm" \| "sui"` | The one switch that tells a caller which encoder a key needs. `demo.sh`, the verify tools and the web routes branch on it once, at the top |
+
+## Sui
+
+Sui accepts secp256k1 natively (scheme flag `0x01`), so this module is pure
+encoding: nothing about the committee, the derivation or
+`finalize_signature` changes. Every function has a Rust twin in
+`contracts/programs/sui_demo/src/`, and both are held byte-for-byte against
+`@mysten/sui` in `sui.test.ts`. Runs in the browser (no `Buffer`).
+
+```
+address  = blake2b256(0x01 || compressed_pk)                 (not keccak)
+tx bytes = BCS(TransactionData::V1 { kind, sender, gas, expiration })
+digest   = blake2b256(intent(0,0,0) || tx bytes)
+payload  = sha256(digest)          ← what secp256k1 signs; what soda stores
+sig      = 0x01 || r || s || compressed_pk, base64             (98 bytes)
+```
+
+### Chain registry
+
+```ts
+type SuiChainKey = 'sui-testnet' | 'sui-devnet'
+
+type SuiChain = {
+  key: SuiChainKey
+  family: 'sui'
+  name: string
+  chainTag: Uint8Array        // tag32("sui-testnet") / tag32("sui-devnet"); feeds the tweak
+  defaultGraphql: string      // https://graphql.testnet.sui.io/graphql
+  graphqlEnv: string          // SUI_TESTNET_GRAPHQL_URL / SUI_DEVNET_GRAPHQL_URL
+  faucet: string              // https://faucet.testnet.sui.io/v2/gas
+  explorerTx: (digest: string) => string      // https://suiscan.xyz/testnet/tx/<digest>
+  explorerAddress: (addr: string) => string   // https://suiscan.xyz/testnet/account/<addr>
+}
+```
+
+| Export | Behavior |
+| --- | --- |
+| `SUI_CHAINS: Record<SuiChainKey, SuiChain>` | The two registered networks |
+| `getSuiChain(key)` | Resolve a `DEMO_CHAIN`-style key; unset = `sui-testnet`; case-insensitive; throws on an EVM key |
+| `suiGraphqlUrl(chain, env?)` | Server-side endpoint: `env[chain.graphqlEnv]`, else `chain.defaultGraphql` |
+
+The chain tag is a derivation input, so the same owner has a different
+address on `sui-testnet`, `sui-devnet`, Sepolia and Base.
+
+### Address
+
+| Export | Behavior |
+| --- | --- |
+| `compressPk(pk): Uint8Array` | 33-byte SEC1 compressed form from a 65-byte uncompressed (or already 33-byte) key |
+| `suiAddressFromPk(pk): Uint8Array` | `blake2b256(0x01 \|\| compressPk(pk))`, 32 bytes. Accepts 33 or 65 bytes |
+| `deriveSuiAddress(groupPkCompressed, owner, seeds, chainTag)` | `computeTweak` → `deriveForeignPk` → `suiAddressFromPk`; returns `{ tweak, foreignPk, suiAddress }` |
+| `parseSuiAddress(hex): Uint8Array` | Parse an address / object id with or without `0x`, left-padding short forms (`0x2`) to 32 bytes |
+| `bytesToHex0x(b): string` | `0x` + lowercase hex; the form Sui prints addresses in |
+
+### BCS encoding
+
+```ts
+type SuiObjectRef = {
+  objectId: Uint8Array   // 32
+  version: bigint
+  digest: Uint8Array     // 32, i.e. base58-decoded
+}
+
+type SuiTxEnvelope = {
+  kindBytes: Uint8Array        // BCS TransactionKind; must start with SUI_KIND_PROGRAMMABLE (0x00)
+  sender: Uint8Array           // 32
+  gasPayment: SuiObjectRef[]   // at least one
+  gasOwner?: Uint8Array        // defaults to sender; anything else is a sponsored tx and needs their signature too
+  gasPrice: bigint
+  gasBudget: bigint
+}
+```
+
+| Export | Behavior |
+| --- | --- |
+| `encodeSuiTransferKind(recipient, amountMist): Uint8Array` | The simplest useful PTB: `SplitCoins(GasCoin, [amount])` then `TransferObjects([result], recipient)`. Byte-identical to what `@mysten/sui` emits for the same two calls |
+| `encodeSuiTransactionData(env: SuiTxEnvelope): Uint8Array` | BCS `TransactionData::V1 { kind, sender, gas_data, expiration: None }`. For arbitrary PTBs pass `kindBytes` from `Transaction.build({ onlyTransactionKind: true })`; the output equals `Transaction.build()` |
+
+The Rust twin `sui_bcs::encode_transaction_data` produces the same bytes
+on-chain from the same inputs, which is how `sui_demo` commits to exactly
+this transaction.
+
+### Hashing and signatures
+
+| Export | Behavior |
+| --- | --- |
+| `suiIntentMessage(txBytes)` | `intent(0,0,0) \|\| txBytes` |
+| `suiIntentDigest(txBytes)` | `blake2b256(intent \|\| txBytes)`: what an Ed25519 wallet signs directly |
+| `suiSigningPayload(txBytes)` | `sha256(suiIntentDigest(txBytes))`: the 32 bytes SODA signs and `finalize_signature` recovers against. Sui's secp256k1 verifier applies the same SHA-256 before the ECDSA check |
+| `suiTransactionDigest(txBytes): string` | `base58(blake2b256("TransactionData::" \|\| txBytes))`: the digest explorers and `executeTransaction` report |
+| `encodeSuiSignature(sig64, pk): Uint8Array` | `0x01 \|\| r \|\| s \|\| compressPk(pk)`, 98 bytes. Base64 it for the RPC (`SuiGraphQl` does) |
+| `decodeSuiSignature(bytes)` | Inverse; returns `{ flag, signature, publicKey }`. Throws on any scheme but secp256k1 |
+| `signSuiTransactionWithSecp256k1(txBytes, secretKey)` | Sign with a raw secp256k1 secret; returns `{ signatureB64, recoveryId }`. Used by the gas sponsor, never by the committee |
+
+### Local keys (sponsors)
+
+The sponsor that tops derived addresses up is an ordinary Sui account, and
+what people have for those is usually a `suiprivkey1…` export from
+`sui keytool` or Sui Wallet (bech32 over `flag || 32-byte secret`, flag
+`0x00` Ed25519 or `0x01` secp256k1). The committee never goes through any
+of this.
+
+```ts
+type SuiSigningKey = {
+  scheme: 'ed25519' | 'secp256k1'
+  secretKey: Uint8Array   // 32-byte seed (Ed25519) or scalar (secp256k1)
+}
+```
+
+| Export | Behavior |
+| --- | --- |
+| `parseSuiPrivateKey(input): SuiSigningKey` | Accepts a `suiprivkey1…` export (either scheme) or 32 bytes of hex, taken as secp256k1 like the EVM sponsor key. Refuses secp256r1 by name, bad checksums, and anything else |
+| `suiPublicKeyFromKey(key)` | 32-byte Ed25519 key or 33-byte compressed secp256k1 key |
+| `suiAddressFromKey(key)` | `blake2b256(flag \|\| pk)` with the scheme's own flag |
+| `suiAddressFromEd25519Pk(pk)` | `blake2b256(0x00 \|\| pk)` for an ordinary Ed25519 Sui account |
+| `signSuiTransactionWithKey(txBytes, key)` | Signs with either scheme (Ed25519 over the intent digest, secp256k1 over its SHA-256) and returns `{ serialized, signatureB64 }` in Sui's `flag \|\| sig \|\| pk` form |
+| `bech32Decode(str)` | BIP-173 bech32 decoder (not bech32m); returns `{ hrp, data }`. Only what `suiprivkey1…` needs |
+
+### GraphQL client
+
+Mysten deprecated JSON-RPC on the public fullnodes, so the client speaks
+GraphQL. Same shape as `EthRpc`: a URL in, a handful of typed calls out.
+
+```ts
+const sui = new SuiGraphQl(suiGraphqlUrl(SUI_CHAINS['sui-testnet']))
+
+const chainId  = await sui.getChainIdentifier()            // string, e.g. "4c78adac"
+const price    = await sui.getReferenceGasPrice()          // bigint, MIST per gas unit
+const balance  = await sui.getBalance(addrHex)             // bigint, MIST; 0n for an unseen address
+const coins    = await sui.getGasCoins(addrHex, 20)        // SuiCoin[], largest first
+const sim      = await sui.simulate(txBytes)               // { status, error }; dry-run before paying for Solana txs
+const exec     = await sui.executeTransaction(txBytes, [serializedSig]) // waits for finality
+const info     = await sui.getTransaction(digest)          // SuiTransactionInfo | null (not indexed yet)
+
+// Generic escape hatch
+const d = await sui.query<{ chainIdentifier: string }>('{ chainIdentifier }')
+
+console.log(sui.endpoint)
+```
+
+```ts
+type SuiCoin = { ref: SuiObjectRef; balance: bigint }
+
+type SuiExecuteResult = {
+  digest: string
+  status: 'SUCCESS' | 'FAILURE'   // FAILURE = accepted but the commands aborted; gas was charged
+  error: string | null
+}
+
+type SuiTransactionInfo = {
+  digest: string
+  sender: string
+  txBytes: Uint8Array            // BCS TransactionData, exactly the bytes that were signed
+  signatures: Uint8Array[]       // serialized (flag || sig || pk)
+  status: 'SUCCESS' | 'FAILURE' | null
+  error: string | null
+  checkpoint: bigint | null
+  timestamp: string | null
+}
+```
+
+`requestSuiFromFaucet(faucetUrl, recipientHex)` POSTs
+`{ FixedAmountRequest: { recipient } }` and returns
+`{ ok, status, body }`. Public faucets rate-limit per IP, so a `429` is the
+common failure and is reported, not thrown; the caller polls the balance.
+
+### Encodings
+
+| Export | Behavior |
+| --- | --- |
+| `toBase58(b)` / `fromBase58(s)` | Bitcoin-alphabet base58, as Sui prints digests and object digests |
+| `toBase64(b)` / `fromBase64(s)` | Browser-safe base64 (no `Buffer`) for the GraphQL wire format |
+
+### Constants
+
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `SUI_SECP256K1_FLAG` | `0x01` | Scheme flag; `0x02` is secp256r1 |
+| `SUI_ED25519_FLAG` | `0x00` | Sui's default scheme; what a `sui keytool` / Sui Wallet export usually is |
+| `SUI_PRIVATE_KEY_HRP` | `"suiprivkey"` | Bech32 human-readable part of an exported Sui private key |
+| `SUI_INTENT_TRANSACTION_DATA` | `[0, 0, 0]` | Intent `{ scope: TransactionData, version: V0, app_id: Sui }` |
+| `SUI_TX_DIGEST_PREFIX` | `"TransactionData::"` | Prefix hashed with the tx bytes to form the explorer digest |
+| `SUI_KIND_PROGRAMMABLE` | `0x00` | First byte of a `TransactionKind` that is a ProgrammableTransaction |
+| `SUI_COIN_TYPE` | `0x2::sui::SUI` | Coin type for balance queries |
+| `SUI_COIN_OBJECT_TYPE` | `0x2::coin::Coin<0x2::sui::SUI>` | Object type filter for gas coins |
+| `MIST_PER_SUI` | `1_000_000_000n` | |
+| `SUI_DEMO_AMOUNT_MIST` | `1_000_000n` | 0.001 SUI: what the demo sends |
+| `SUI_TRANSFER_GAS_BUDGET_MIST` | `10_000_000n` | 0.01 SUI budget for a split-and-transfer; unused is refunded |
+| `SUI_MIN_BALANCE_MIST` | `20_000_000n` | 0.02 SUI the derived address must hold before a transfer is attempted |
+| `SUI_SPONSOR_MAX_TOPUP_MIST` | `100_000_000n` | 0.1 SUI per-run cap on what `SUI_FUNDER_KEY` tops an address up by |
+| `SUI_MAX_GAS_COINS` | `4` | Gas coins passed per transaction; Sui merges them at execution, and the cap keeps instruction data small |
+
 ## Helpers
 
 | Function | Behavior |
@@ -192,18 +468,28 @@ console.log(rpc.endpoint)
 | Name | Type | Value |
 | --- | --- | --- |
 | `DERIVATION_DOMAIN` | `Uint8Array` | UTF-8 bytes of `"SODA-v1"` |
-| `ETH_SEPOLIA_CHAIN_TAG` | `Uint8Array` | Sepolia chain-tag bytes |
+| `ETH_SEPOLIA_CHAIN_TAG` | `Uint8Array` | `tag32("ethereum-sepolia")`, identical to `CHAINS.sepolia.chainTag` |
 
-Adding a new chain means defining a new `chain_tag` constant and an
-encoder module (`packages/soda-sdk/src/<chain>.ts`).
+Every chain tag is a 32-byte ASCII string, zero-padded. Adding a chain means
+a registry entry (EVM) or an encoder module with its own registry (a new
+family), never a change to `soda`.
 
 ## Tests
 
-13 vitest cases run with `pnpm sdk:test`:
+42 vitest cases run with `pnpm sdk:test`:
 
-- `derive.test.ts` — canonical secp256k1 vectors (G + G = 2G, etc.) plus
+- `derive.test.ts` (6) — canonical secp256k1 vectors (G + G = 2G, etc.) plus
   Rust parity from `derivation.rs`.
-- `rlp.test.ts` — EIP-155 mainnet canonical vector + round-trip tests.
+- `rlp.test.ts` (7) — EIP-155 mainnet canonical vector + round-trip tests.
+- `aave.test.ts` (6) — Aave V3 calldata and decoder vectors.
+- `sui.test.ts` (23) — holds the SDK byte-for-byte against `@mysten/sui`
+  2.30 (a devDependency only): `Secp256k1Keypair.toSuiAddress`,
+  `Transaction.build()` with one, two and sponsor-owned gas coins, an
+  arbitrary PTB kind wrapped in the SDK envelope, `signTransaction` /
+  `verifyTransactionSignature`, `getDigest`, base58 / base64,
+  `suiprivkey1…` exports of both schemes against `decodeSuiPrivateKey` and
+  the keypairs' own `signTransaction`, BIP-173 bech32 vectors, plus the Rust
+  vectors from `sui_bcs.rs` and chain-tag separation.
 
 ## Building and publishing
 
@@ -219,12 +505,25 @@ reading raw `src/` while published consumers get the compiled output.
 
 ## Adding a new chain
 
-1. Add a chain tag constant: `BTC_TESTNET_CHAIN_TAG`.
-2. Create `packages/soda-sdk/src/bitcoin.ts` with BIP143 sighash + P2WPKH
-   address encoding.
-3. Add tests with known-answer vectors against `bitcoinjs-lib`.
-4. Re-export from `index.ts`.
-5. Add a corresponding `programs/btc_demo/` for the on-chain harness.
+Sui is the worked example. Everything it needed lives outside `soda`:
 
-The core `soda` program does not change: a new chain is purely an
-off-chain encoding plus a new caller program.
+1. **Encoder module with its own registry:** `packages/soda-sdk/src/sui.ts`
+   — chain tags (`tag32("sui-testnet")`), the address rule, the transaction
+   encoder, the two-stage hash that yields the 32-byte payload, the
+   signature envelope, and a node client. Wire the key into `chainFamily`
+   in `chains.ts` so callers can branch once.
+2. **Parity tests against the chain's own SDK:** `sui.test.ts` holds every
+   encoder byte-for-byte against `@mysten/sui`, kept as a devDependency so
+   the published package stays at `@noble/*` only.
+3. **Re-export from `index.ts`.**
+4. **A caller program:** `contracts/programs/sui_demo/` builds the same
+   bytes on-chain (`sui_bcs.rs`, plus `blake2b.rs` because Solana has no
+   blake2 syscall), derives the sender, and CPIs `soda::request_signature`
+   with the payload. Its unit tests use vectors produced by `@mysten/sui`.
+5. **A client and an audit tool:** `apps/demo/src/demo-sui.ts` and
+   `verify-sui.ts`; `demo.sh` routes `DEMO_CHAIN=sui-*` to them.
+
+Bitcoin follows the same shape: `bitcoin.ts` with BIP143 sighash + P2WPKH
+addresses tested against `bitcoinjs-lib`, and a `programs/btc_demo/`. The
+core `soda` program does not change: a new chain is an encoding plus a new
+caller program.

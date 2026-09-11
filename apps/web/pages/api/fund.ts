@@ -20,13 +20,15 @@ import {
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
-import { chainRpcUrl, getChain } from "@soda-sdk/core";
+import { chainRpcUrl } from "@soda-sdk/core";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { chainMismatch, serverChain } from "@/lib/chain";
 
-// Same DEMO_CHAIN the CLI uses, so the sponsor funds on the chain the demo
-// will actually broadcast to. Each chain has its own sponsor balance.
-const CHAIN = getChain(process.env.DEMO_CHAIN);
+// Same chain the browser was built for (see lib/chain.ts), so the sponsor
+// funds on the chain the demo will actually broadcast to. Each chain has its
+// own sponsor balance.
+const CHAIN = serverChain();
 const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 const FUNDING_THRESHOLD_WEI = 200_000_000_000_000n; // 0.0002 ETH
 const MAX_TOPUP_WEI = 2_000_000_000_000_000n; // 0.002 ETH
@@ -48,7 +50,13 @@ export default async function handler(
   }
 
   try {
-    const body = req.body as { address?: string; minWei?: string };
+    const body = req.body as {
+      address?: string;
+      minWei?: string;
+      chain?: string;
+    };
+    const mismatch = chainMismatch(body?.chain, CHAIN);
+    if (mismatch) return res.status(400).json({ error: mismatch });
     const target = String(body?.address ?? "");
     if (!/^0x[0-9a-fA-F]{40}$/.test(target)) {
       return res.status(400).json({ error: "address must be 20 bytes hex" });
@@ -142,6 +150,18 @@ export default async function handler(
       balanceWei: balance.toString(),
     });
   } catch (e) {
-    return res.status(500).json({ error: (e as Error).message });
+    // Say which chain and RPC host failed. "ETH_SEPOLIA is not enabled for
+    // this app" from an unnamed endpoint reads as a page bug; with the host
+    // it reads as what it is — the server's RPC env var for this chain.
+    const host = (() => {
+      try {
+        return new URL(sepoliaRpc()).host;
+      } catch {
+        return sepoliaRpc();
+      }
+    })();
+    return res.status(500).json({
+      error: `${CHAIN.name} via ${host} (${CHAIN.rpcEnv}): ${(e as Error).message}`,
+    });
   }
 }

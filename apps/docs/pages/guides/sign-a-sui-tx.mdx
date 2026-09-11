@@ -1,0 +1,504 @@
+---
+title: Sign a Sui transaction
+description: End-to-end walkthrough of using @soda-sdk/core to derive a Sui address, request a signature on Solana, and execute on Sui testnet.
+---
+
+import { Callout, Steps, Tabs } from 'nextra/components'
+import CopyPrompt from '../../components/CopyPrompt'
+
+# Sign a Sui transaction
+
+<CopyPrompt prompt="Walk me through signing a Sui testnet transaction from a Solana program with @soda-sdk/core. I want a runnable TypeScript file at the end. Use the latest API from the skill, including the Sui section." />
+
+A complete end-to-end walkthrough of using `@soda-sdk/core` to move SUI from
+an address that a Solana account owns. Same committee, same `soda` program,
+same `finalize_signature` check as the [Ethereum guide](/guides/sign-an-eth-tx):
+Sui accepts secp256k1 signatures natively (scheme flag `0x01`), so nothing
+about the primitive changes. What changes is the envelope around the 32-byte
+payload, and this page is mostly about that envelope.
+
+<Callout type="info">
+  This guide shows the **client-side** pieces (TypeScript). The Solana side
+  (CPIing into `soda::request_signature`, listening for `SigCompleted`) can
+  be done from your own Anchor program (production shape) or through the
+  deployed `sui_demo` program from a client (what `apps/demo` does). Both
+  flows use the same SDK calls below.
+</Callout>
+
+<Callout type="warning">
+  Use Sui testnet or devnet only. **Do not fund a SODA-derived address with
+  mainnet SUI** while the deployed committee is a single dev key or a 2-of-2
+  under one operator. Throwaway amounts only.
+</Callout>
+
+## Prerequisites
+
+- A Solana keypair on devnet with a little SOL (a run costs a few thousand
+  lamports; a fresh deploy of the programs needs about 5 SOL).
+- Test SUI at the derived address. You'll compute the address in step 2;
+  it needs at least `SUI_MIN_BALANCE_MIST` (0.02 SUI) before a transfer is
+  attempted. Get it from the [web faucet](https://faucet.sui.io) (pick
+  *testnet*), from the `#testnet-faucet` channel in the Sui Discord, or let
+  the demo top it up from a sponsor key: `SUI_FUNDER_KEY` accepts a
+  `suiprivkey1…` export from `sui keytool` / Sui Wallet (Ed25519 or
+  secp256k1) or 32 bytes of hex (taken as secp256k1), holding testnet SUI
+  only. The address is deterministic, so you fund it once and demo many
+  times.
+- No RPC key. The SDK talks to Mysten's public GraphQL endpoint
+  (`https://graphql.testnet.sui.io/graphql`), which is CORS-open and works
+  from a browser. Override with `SUI_TESTNET_GRAPHQL_URL` if you run your
+  own node.
+
+## Install
+
+```bash
+pnpm add @soda-sdk/core @solana/web3.js @coral-xyz/anchor
+```
+
+Unlike the Ethereum path there is no separate hash import: `blake2b` and
+`sha256` are used inside the SDK's Sui module. `@mysten/sui` is optional and
+only needed if you want to build an arbitrary programmable transaction block
+(PTB) rather than the plain transfer the SDK encodes for you.
+
+## Step 1: Read the committee public key
+
+The committee's aggregate public key (`group_pk`, 33-byte compressed) lives
+in the `Committee` PDA on-chain. Read it through the IDL or from the raw
+account bytes:
+
+<Tabs items={['Anchor fetch (recommended)', 'Raw account layout']}>
+  <Tabs.Tab>
+
+```ts
+import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor'
+import { Connection, Keypair, PublicKey } from '@solana/web3.js'
+import sodaIdl from './idl/soda.json' // contracts/target/idl/soda.json
+
+const SODA_PROGRAM_ID = new PublicKey('CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J')
+
+const walletKp = Keypair.fromSecretKey(/* ~/.config/solana/id.json */)
+const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
+const provider = new AnchorProvider(conn, new Wallet(walletKp), { commitment: 'confirmed' })
+const sodaProgram = new Program(sodaIdl as any, provider)
+
+const [committeePda] = PublicKey.findProgramAddressSync(
+  [Buffer.from('committee')],
+  SODA_PROGRAM_ID,
+)
+const committee = await (sodaProgram.account as any).committee.fetch(committeePda)
+const groupPkCompressed = Uint8Array.from(committee.groupPk) // 33 bytes, 0x02/0x03 || X
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+`Committee` is `{ bump: u8, authority: Pubkey, group_pk: [u8; 33], signer_count: u8 }`
+behind the 8-byte Anchor discriminator, so the compressed key sits at
+offset `8 + 1 + 32 = 41`:
+
+```ts
+const acct = await conn.getAccountInfo(committeePda)
+if (!acct) throw new Error('Committee not initialized')
+const groupPkCompressed = new Uint8Array(acct.data.subarray(41, 41 + 33))
+```
+
+For local development the dev signer key is at `keyshare.dev.json` (a hex
+secret) and `secp256k1.getPublicKey(sk, true)` gives the same 33 bytes. That
+shortcut only works against the single dev signer; the on-chain read is the
+path that survives a committee rotation.
+
+  </Tabs.Tab>
+</Tabs>
+
+## Step 2: Derive your Sui address
+
+The tweak is keyed on the Solana **signer** of the request: a wallet
+signing directly owns its own Sui address, and a program CPI-ing with
+`invoke_signed` owns one under its PDA. The chain tag is what gives the same
+owner a different address on Sui than on Base.
+
+```ts
+import { deriveSuiAddress, bytesToHex0x, SUI_CHAINS } from '@soda-sdk/core'
+
+const CHAIN = SUI_CHAINS['sui-testnet']
+const owner = walletKp.publicKey.toBytes()   // or your PDA
+const seeds = new Uint8Array(0)              // per-request path; empty = one canonical address
+
+const { tweak, foreignPk, suiAddress } = deriveSuiAddress(
+  groupPkCompressed,
+  owner,
+  seeds,
+  CHAIN.chainTag,                            // tag32("sui-testnet")
+)
+
+const suiAddressHex = bytesToHex0x(suiAddress) // 0x + 64 hex
+console.log('Your Sui address:', suiAddressHex)
+console.log(CHAIN.explorerAddress(suiAddressHex))
+```
+
+What the function computes:
+
+```
+tweak      = sha256("SODA-v1" || owner || seeds || chain_tag)
+foreign_pk = group_pk + tweak · G                       (65-byte uncompressed)
+address    = blake2b256(0x01 || compress(foreign_pk))   (32 bytes)
+```
+
+The leading `0x01` is Sui's secp256k1 scheme flag. It is part of the address
+preimage, so the address commits to the signature scheme: the same key used
+as Ed25519 material would produce a different address. `suiAddressFromPk`
+does only the last line if you already have `foreignPk`.
+
+This is deterministic: same inputs always give the same address. Fund it
+once on testnet, demo forever.
+
+## Step 3: Build the transaction
+
+Sui has no nonce and no account balance in the EVM sense. Gas is paid from
+coin **objects** the sender owns, each identified by `(id, version, digest)`,
+and the transaction commits to those exact refs. So the client first reads
+the derived address's coins and the current reference gas price, then
+BCS-encodes `TransactionData`.
+
+```ts
+import {
+  SuiGraphQl,
+  suiGraphqlUrl,
+  encodeSuiTransferKind,
+  encodeSuiTransactionData,
+  suiSigningPayload,
+  suiTransactionDigest,
+  parseSuiAddress,
+  SUI_DEMO_AMOUNT_MIST,          // 0.001 SUI
+  SUI_TRANSFER_GAS_BUDGET_MIST,  // 0.01 SUI; unused budget is refunded
+  SUI_MAX_GAS_COINS,             // 4; Sui merges the listed coins at execution
+} from '@soda-sdk/core'
+
+const sui = new SuiGraphQl(suiGraphqlUrl(CHAIN)) // env override, else the public endpoint
+
+const coins = (await sui.getGasCoins(suiAddressHex)).slice(0, SUI_MAX_GAS_COINS) // largest first
+if (coins.length === 0) throw new Error('no SUI coin objects: unfunded, or not indexed yet')
+const gasPrice = await sui.getReferenceGasPrice()
+
+const recipient = parseSuiAddress(suiAddressHex) // self-transfer for the demo
+
+// The kind: split 0.001 SUI off the gas coin and transfer it.
+const kindBytes = encodeSuiTransferKind(recipient, SUI_DEMO_AMOUNT_MIST)
+
+// The envelope: TransactionData::V1 { kind, sender, gas, expiration: None }.
+const txBytes = encodeSuiTransactionData({
+  kindBytes,
+  sender: suiAddress,
+  gasPayment: coins.map((c) => c.ref),
+  gasPrice,
+  gasBudget: SUI_TRANSFER_GAS_BUDGET_MIST,
+})
+
+const payload = suiSigningPayload(txBytes)       // 32 bytes: what the committee signs
+const digest  = suiTransactionDigest(txBytes)    // base58: what Suiscan will show
+
+// Dry-run the exact bytes before paying for any Solana transaction.
+const sim = await sui.simulate(txBytes)
+if (sim.status !== 'SUCCESS') throw new Error(`Sui dry-run failed: ${sim.error}`)
+```
+
+Two hashes, and it matters which is which:
+
+```
+intent digest = blake2b256(0x00 0x00 0x00 || tx_bytes)       what an Ed25519 wallet signs
+payload       = sha256(intent digest)                         what secp256k1 signs; what soda stores
+tx digest     = base58(blake2b256("TransactionData::" || tx_bytes))   what explorers show
+```
+
+Sui's secp256k1 verifier hashes the intent digest with SHA-256 before the
+ECDSA check, so the recoverable signature over `payload` is what the network
+accepts and what `finalize_signature` recovers on Solana.
+
+<Callout type="info">
+  **Arbitrary PTBs.** `encodeSuiTransferKind` covers one shape. For a Move
+  call, a swap, or an NFT mint, build the kind with `@mysten/sui` and hand the
+  bytes to the same envelope:
+
+  ```ts
+  import { Transaction } from '@mysten/sui/transactions'
+
+  const tx = new Transaction()
+  tx.moveCall({ target: '0x…::module::fn', arguments: [/* … */] })
+  const kindBytes = await tx.build({ onlyTransactionKind: true })
+  ```
+
+  `encodeSuiTransactionData({ kindBytes, … })` then produces exactly the
+  bytes `tx.build()` would have, which is what the parity tests check. On
+  the Solana side use `sign_sui_tx` instead of `sign_sui_transfer` (step 4).
+</Callout>
+
+## Step 4: Request the signature on Solana
+
+This is the only step that doesn't go through `@soda-sdk/core`; it's a
+Solana instruction. Sui puts the **sender** inside the signed bytes, so
+whoever builds the envelope has to know the derived address. The deployed
+`sui_demo` program derives it on-chain from the signer and builds the same
+BCS bytes as step 3, then commits the payload through
+`soda::request_signature`. Your client never tells the program which address
+to use.
+
+<Tabs items={['Production: CPI from your program', 'Demo: client-side ix']}>
+  <Tabs.Tab>
+
+The shape of `contracts/programs/sui_demo/src/lib.rs`, trimmed. `soda`
+exports its on-chain derivation, so the caller can compute the sender with
+the same two calls `request_signature` uses internally:
+
+```rust
+use soda::derive_onchain::{compute_tweak, derive_foreign_pk_xy};
+use soda::state::Committee;
+
+// 1. The sender is the signer's derived address. It has to be known before
+//    the CPI because Sui signs over it.
+let tweak = compute_tweak(&ctx.accounts.user.key().to_bytes(), &derivation_seeds, &chain_tag);
+let foreign_pk_xy = derive_foreign_pk_xy(&ctx.accounts.committee.group_pk, &tweak)?;
+let sender = sui_bcs::sui_address_from_pk_xy(&foreign_pk_xy); // blake2b256(0x01 || compressed)
+
+// 2. Envelope, then Sui's two-stage hash.
+let tx_bytes = sui_bcs::encode_transaction_data(&kind_bytes, &sender, &gas_payment, &sender, gas_price, gas_budget);
+let payload  = sui_bcs::signing_payload(&tx_bytes);       // sha256(blake2b256(intent || tx))
+
+// 3. CPI soda::request_signature. soda re-derives foreign_pk from the same
+//    signer + seeds + chain_tag and stores it for finalize.
+let cpi_ctx = CpiContext::new(
+    ctx.accounts.soda_program.to_account_info(),
+    soda::cpi::accounts::RequestSignature {
+        committee:      ctx.accounts.committee.to_account_info(),
+        sig_request:    ctx.accounts.sig_request.to_account_info(),
+        requester:      ctx.accounts.user.to_account_info(),
+        system_program: ctx.accounts.system_program.to_account_info(),
+    },
+);
+soda::cpi::request_signature(cpi_ctx, derivation_seeds, payload, chain_tag, 0 /* secp256k1 ECDSA */)?;
+
+// 4. The relayer attaches `0x01 || sig || pk` to exactly these bytes.
+emit!(SuiTxRequested { sig_request: ctx.accounts.sig_request.key(), sender, tx_bytes });
+```
+
+`sui_bcs.rs` and `blake2b.rs` (Solana has no blake2 syscall) ship in the
+`sui_demo` crate and are held byte-for-byte against `@mysten/sui` in their
+unit tests. Copy them into your program, or CPI `sui_demo` directly.
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Call the `sui_demo` program (`9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`)
+with the IDL; it is live on devnet, and `./demo.sh` deploys it to whichever
+cluster is missing it. The `sig_request` PDA is seeded by
+`(requester, payload)` on the `soda` program:
+
+```ts
+import BN from 'bn.js'
+import { ComputeBudgetProgram, SystemProgram } from '@solana/web3.js'
+import suiDemoIdl from './idl/sui_demo.json' // contracts/target/idl/sui_demo.json
+
+const suiDemo = new Program(suiDemoIdl as any, provider)
+
+const [sigRequestPda] = PublicKey.findProgramAddressSync(
+  [Buffer.from('sig'), walletKp.publicKey.toBuffer(), Buffer.from(payload)],
+  SODA_PROGRAM_ID,
+)
+
+const gasPayment = coins.map((c) => ({
+  objectId: Array.from(c.ref.objectId),          // [u8; 32]
+  version: new BN(c.ref.version.toString()),     // u64
+  digest: Array.from(c.ref.digest),              // [u8; 32] (base58-decoded)
+}))
+
+const sig = await (suiDemo.methods as any)
+  .signSuiTransfer(
+    Array.from(recipient),                            // [u8; 32]
+    new BN(SUI_DEMO_AMOUNT_MIST.toString()),          // u64 amount_mist
+    gasPayment,                                       // Vec<SuiObjectRef>, 1..=4
+    new BN(gasPrice.toString()),                      // u64
+    new BN(SUI_TRANSFER_GAS_BUDGET_MIST.toString()),  // u64
+    Array.from(CHAIN.chainTag),                       // [u8; 32]
+    Buffer.from(seeds),                               // bytes derivation_seeds
+  )
+  .accounts({
+    user: walletKp.publicKey,
+    committee: committeePda,
+    sigRequest: sigRequestPda,
+    sodaProgram: SODA_PROGRAM_ID,
+    systemProgram: SystemProgram.programId,
+  })
+  // Two on-chain derivations (sui_demo + soda) plus blake2b: well under
+  // 200k CU for a transfer, but raised so a longer PTB never fails on the
+  // default budget.
+  .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+  .rpc()
+```
+
+For an arbitrary PTB, `signSuiTx(kindBytes, gasPayment, gasPrice, gasBudget, chainTag, seeds)`
+takes the same accounts; `kindBytes` must start with `0x00`
+(ProgrammableTransaction) and be at most 768 bytes.
+
+The program derived the sender and hashed the bytes itself. If either
+disagreed with your local `txBytes`, the PDA would not exist at
+`sigRequestPda` (the payload is a seed), which is a useful sanity check:
+
+```ts
+const sr = await (sodaProgram.account as any).sigRequest.fetch(sigRequestPda)
+if (!Buffer.from(sr.foreignPkXy).equals(Buffer.from(foreignPk.subarray(1)))) {
+  throw new Error('program derived a different key than this client')
+}
+```
+
+  </Tabs.Tab>
+</Tabs>
+
+## Step 5: Wait for `SigCompleted`
+
+Identical to the Ethereum guide. `finalize_signature` emits `SigCompleted`
+once the committee returns a signature that `secp256k1_recover` maps to the
+stored `foreign_pk_xy`. Reuse the
+[`waitForSigCompleted` decoder](/guides/sign-an-eth-tx#step-5-wait-for-sigcompleted):
+same discriminator (`sha256("event:SigCompleted")[..8]`), same layout
+(`sig_request: Pubkey, signature: [u8; 64], recovery_id: u8`).
+
+```ts
+const { signature, recoveryId } = await waitForSigCompleted(conn, sigRequestPda)
+```
+
+If your own process is the one submitting `finalize_signature` (as
+`apps/demo` does in dev-key mode), you can skip the subscription and read
+`sig_request.signature` back from the account after the instruction
+confirms.
+
+## Step 6: Assemble and execute
+
+Sui wants `flag || r || s || pubkey`, base64. The pubkey is the derived key,
+and Sui checks `blake2b256(0x01 || pubkey) == sender` before it checks the
+ECDSA, which is the same equality step 2 established.
+
+```ts
+import { encodeSuiSignature, compressPk } from '@soda-sdk/core'
+
+const serializedSig = encodeSuiSignature(signature, compressPk(foreignPk)) // 98 bytes
+
+const exec = await sui.executeTransaction(txBytes, [serializedSig]) // waits for finality
+if (exec.status !== 'SUCCESS') {
+  throw new Error(`executed but failed: ${exec.error} (${CHAIN.explorerTx(exec.digest)})`)
+}
+console.log(CHAIN.explorerTx(exec.digest)) // https://suiscan.xyz/testnet/tx/<digest>
+```
+
+`exec.digest` equals the `digest` you computed locally in step 3; the
+transaction that landed is the transaction the Solana program committed to.
+Note that Sui reports `FAILURE` with an `executionError` for a transaction
+that was accepted but whose commands aborted; that still costs gas, which is
+why step 3 simulates first.
+
+## Step 7: Verify
+
+```bash
+pnpm verify:sui <digest>
+# or, from a different network / requester:
+DEMO_CHAIN=sui-testnet VERIFY_REQUESTER=<solana pubkey> pnpm verify:sui <digest>
+```
+
+`apps/demo/src/verify-sui.ts` reads only public state and prints the chain
+of checks tying the Sui transaction back to the Solana `SigRequest`:
+
+1. `blake2b256("TransactionData::" ‖ bytes) == digest`, on the bytes the node returned.
+2. The user signature's flag is `0x01` and `blake2b256(0x01 ‖ pubkey) == sender`.
+3. `payload = sha256(blake2b256(intent ‖ bytes))` recomputed locally.
+4. A `SigRequest` PDA exists for `(requester, payload)`, is `completed`, and
+   its `chain_tag` names this Sui network.
+5. `SigRequest.signature` equals the `(r, s)` Sui verified.
+6. `secp256k1_recover(payload, recovery_id, sig)` equals `SigRequest.foreign_pk_xy`
+   and equals the pubkey inside the Sui signature.
+7. `blake2b256(0x01 ‖ recovered)` equals the transaction's sender.
+8. `group_pk + tweak·G` re-derived from the on-chain requester, seeds and
+   chain tag equals `foreign_pk_xy`.
+
+## Putting it together
+
+The full reference implementation is
+[`apps/demo/src/demo-sui.ts`](https://github.com/JingYuan0926/frontier/blob/main/apps/demo/src/demo-sui.ts):
+derive → fund (sponsor key, else faucet, else poll) → coins + gas price →
+quote → build + simulate → `sign_sui_tx` → sign (MPC or dev key with tweak)
+→ `finalize_signature` → `executeTransaction` → Suiscan link. `./demo.sh`
+routes there for any `DEMO_CHAIN=sui-*` and chains into
+`pnpm verify:sui` afterwards:
+
+```bash
+DEMO_CHAIN=sui-testnet ./demo.sh
+DEMO_CHAIN=sui-testnet DEMO_RECIPIENT=0x… ./demo.sh   # send to someone else
+DEMO_CHAIN=sui-testnet SODA_DRY_RUN=1 ./demo.sh       # Solana side only, made-up gas coin
+```
+
+The production-shape split exists too. `apps/relayer` subscribes to
+`SuiTxRequested` alongside `EthTxRequested`, and on `SigCompleted` recovers
+the pubkey from the signature, checks `blake2b256(0x01 ‖ pk)` against the
+event's `sender`, attaches the envelope and calls `executeTransaction`
+(`SUI_CHAIN=sui-devnet pnpm relayer:dev` to target devnet). The web app has
+the same three steps at `/sui`: connect Phantom, derive, then trade on
+DeepBook; Phantom signs `sign_sui_tx` and `/api/sui/finalize` refuses to
+sign unless the bytes the browser sends hash to the payload the program
+stored.
+
+## A concrete run
+
+On 2026-09-10 `DEMO_CHAIN=sui-testnet ./demo.sh` ran with the Solana wallet
+`D5pwjGzqvgvuFt4rtMVf1ta4RKXWyGGfG2ekh5KuDfZw` on Solana devnet and the
+public Sui testnet, buying DEEP on DeepBook and then selling it back:
+
+| | |
+| --- | --- |
+| Derived Sui address (sender) | [`0x7b117f9d1a245c001a4b8c8979b4bf4857fb97d96c0daf3ba3a24bd71131eaee`](https://suiscan.xyz/testnet/account/0x7b117f9d1a245c001a4b8c8979b4bf4857fb97d96c0daf3ba3a24bd71131eaee) |
+| Buy | `pool::swap_exact_quote_for_base` — 0.5 SUI in, 19 DEEP out at mid 0.025420 |
+| Buy digest | [`38myk9NxEb4hpwooEzTX5aiY5kqgVvn5BuFgLbFUxLmR`](https://suiscan.xyz/testnet/tx/38myk9NxEb4hpwooEzTX5aiY5kqgVvn5BuFgLbFUxLmR) |
+| Buy on Solana | `sign_sui_tx` `qYUiotC1…FCCT` / `finalize_signature` `2ssAvAtH…u5rb`, `SigRequest` `EUTVwBQ1QWSkaJz7hvFUy8N3Y1KZMtxPYMafDqAHGGGR` |
+| Sell | `pool::swap_exact_base_for_quote` — 19 DEEP in, 0.478990 SUI out, spending coin objects the address bought |
+| Sell digest | [`5XApu3HLMQLUNDoLVBWvYkafifuXG1r2pQT1MzAqZ8qU`](https://suiscan.xyz/testnet/tx/5XApu3HLMQLUNDoLVBWvYkafifuXG1r2pQT1MzAqZ8qU) |
+| Recovered pubkey | `0x036ce095c6ade55e89da53a453e47b29cb37cd928e56dd0b35a4e664682b8a026d` = `group_pk` `0x02062edf…7126` + tweak·G |
+| Balance trail | 5.018002 SUI → 4.523790 SUI + 19 DEEP → 4.997409 SUI |
+
+`pnpm verify:sui <digest>` passes every check on both: the signature Sui
+accepted is the one Solana recorded, and the key it recovers to is the one
+the program derived from the wallet. The Solana side is public on Solscan
+like the EVM runs.
+
+## What differs from EVM, and what does not
+
+| | EVM (Sepolia / Base) | Sui |
+| --- | --- | --- |
+| Address | `keccak256(pk[1..])[12..]`, 20 bytes | `blake2b256(0x01 \|\| compressed pk)`, 32 bytes |
+| Transaction encoding | RLP, legacy + EIP-155 | BCS `TransactionData::V1` |
+| Payload soda stores | `keccak256(unsigned rlp)` | `sha256(blake2b256(intent \|\| tx bytes))` |
+| Digest explorers show | `keccak256(signed rlp)` | `base58(blake2b256("TransactionData::" \|\| tx bytes))` |
+| Signature on the wire | `v, r, s` inside the RLP, `v = recovery_id + 35 + 2·chain_id` | `base64(0x01 \|\| r \|\| s \|\| pk)`, 98 bytes, next to the tx |
+| Sender in the signed bytes | No (recovered from the signature) | Yes (`sender` field; program derives it on-chain) |
+| Replay / ordering | Account nonce | Object versions of the gas coins |
+| Gas | ETH balance, `gasPrice × gasLimit` | Sender's own SUI coin objects, `gasPrice × budget`, unused refunded |
+| Node API | JSON-RPC (`EthRpc`) | GraphQL (`SuiGraphQl`); public JSON-RPC is deprecated |
+| Caller program | `eth_demo::sign_eth_transfer` | `sui_demo::sign_sui_transfer` / `sign_sui_tx` |
+| Derivation, committee, `request_signature`, `finalize_signature`, `SigCompleted` | same | same |
+
+## Common errors
+
+| Error | Cause | Fix |
+| --- | --- | --- |
+| Faucet `429 Wait for Ns` | Public faucets rate-limit per IP | Wait, use the [web faucet](https://faucet.sui.io), or set `SUI_FUNDER_KEY` |
+| `no SUI coin objects at 0x…` | Address unfunded, or the GraphQL indexer has not caught up with the faucet transfer | Check the balance on Suiscan; poll again in a few seconds |
+| Sui `FAILURE` with `executionError` at simulate or execute (stale object, `ObjectVersionUnavailableForConsumption`) | A gas coin's `(version, digest)` changed after you read it, usually because a top-up landed in between | Refetch `getGasCoins` and rebuild `txBytes`; the payload changes, so it is a new `SigRequest` |
+| `gas coins hold X, need Y` | Balance is below amount + budget | Fund to at least 0.02 SUI |
+| `program derived a different key than this client` | Your local `owner` / `seeds` / `chainTag` differ from what the instruction was signed with | Derive from the same signer and the same `SUI_CHAINS[key].chainTag` |
+| `PubkeyMismatch` (Solana custom error `0x1771`) | The signature recovers to a key other than the program-derived `foreign_pk_xy` | The signer applied the wrong tweak (or, in MPC mode, no tweak); see the [committee caveats](/concepts/committee) |
+| `AlreadyCompleted` (`0x1770`) | Another process finalized first | Treat as success; read the on-chain `SigRequest` |
+| `NotProgrammable` / `KindTooLong` / `BadGasPayment` (`sui_demo` `0x1770`–`0x1772`) | `kind_bytes` does not start with `0x00`, exceeds 768 bytes, or `gas_payment` has 0 or more than 4 refs | Build the kind with `onlyTransactionKind: true`; slice coins to `SUI_MAX_GAS_COINS` |
+
+## Next steps
+
+- [Concepts → Derivation](/concepts/derivation) — why one owner gets a
+  different address per chain tag.
+- [Reference → soda program](/reference/soda-program#sui_demo-caller) — the
+  `sui_demo` instructions, accounts and event.
+- [Reference → @soda-sdk/core](/reference/soda-sdk#sui) — every Sui export,
+  with types.

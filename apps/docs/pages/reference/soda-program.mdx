@@ -6,9 +6,9 @@ import { Callout } from 'nextra/components'
 
 # `soda` program
 
-The on-chain primitive. An Anchor 0.32.1 program with three instructions
+The on-chain primitive. An Anchor 0.32.1 program with four instructions
 and two events. Live on Solana devnet at
-`2YDHaX2fPXdmH14hgSJQHMJQpEHrXofzhu5hDVFgFiVd`.
+`CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`.
 
 ## Instructions
 
@@ -17,18 +17,19 @@ and two events. Live on Solana devnet at
 ```rust
 pub fn init_committee(
     ctx: Context<InitCommittee>,
-    group_pk_xy: [u8; 64],
+    group_pk: [u8; 33],
 ) -> Result<()>
 ```
 
 One-time setup. Creates the `Committee` PDA and stores the aggregate group
-public key as uncompressed `X || Y`. v0 uses a single dev key; v1 will add
-threshold + signer set.
+public key in SEC1 compressed form, with the caller as `authority` and
+`signer_count = 1`. v0 uses a single dev key; v1 will add threshold + signer
+set.
 
 | Account | Type | Notes |
 | --- | --- | --- |
 | `committee` | PDA, init | Seeds: `[b"committee"]` |
-| `payer` | Signer, mut | Pays rent |
+| `authority` | Signer, mut | Pays rent; recorded as `committee.authority` |
 | `system_program` | Program | |
 
 ### `request_signature`
@@ -36,23 +37,30 @@ threshold + signer set.
 ```rust
 pub fn request_signature(
     ctx: Context<RequestSignature>,
-    foreign_pk_xy: [u8; 64],
-    seeds: Vec<u8>,
+    derivation_seeds: Vec<u8>,
     payload: [u8; 32],
-    chain_tag: u8,
+    chain_tag: [u8; 32],
+    domain_id: u32,
 ) -> Result<()>
 ```
 
 Creates a `SigRequest` PDA and emits `SigRequested`. Designed for CPI from
-any caller program. The caller is responsible for computing
-`foreign_pk_xy` from `(group_pk, program_id, seeds, chain_tag)`. See
+any caller program. There is no `foreign_pk_xy` parameter: the program
+derives `foreign_pk = group_pk + tweak·G` itself, with the tweak keyed on
+the **requester** (the signer), so a caller cannot request a signature for
+an address it does not control. See
 [Concepts → Derivation](/concepts/derivation).
+
+`derivation_seeds` is at most 64 bytes. `domain_id` selects the signature
+scheme; only `0` (secp256k1 ECDSA) exists today, and the field is there so
+an Ed25519 committee can be added later without a breaking instruction
+change. The request expires 300 seconds after creation (`expires_at`).
 
 | Account | Type | Notes |
 | --- | --- | --- |
-| `sig_request` | PDA, init | Seeds: `[b"sig", caller_program_id, seeds_hash]` |
-| `committee` | PDA | Read-only, used for `group_pk_xy` |
-| `payer` | Signer, mut | |
+| `committee` | PDA | Read-only, used for `group_pk` |
+| `sig_request` | PDA, init | Seeds: `[b"sig", requester, payload]` |
+| `requester` | Signer, mut | Pays rent; its key is the derivation owner |
 | `system_program` | Program | |
 
 ### `finalize_signature`
@@ -68,15 +76,16 @@ pub fn finalize_signature(
 Permissionless: anyone holding a valid signature can finalize the request.
 Runs `secp256k1_recover(payload, recovery_id, signature)` and compares the
 result to `sig_request.foreign_pk_xy`. On match, writes the signature,
-flips status to `Completed`, and emits `SigCompleted`.
+sets `completed = true`, and emits `SigCompleted`.
 
 Returns `SodaError::AlreadyCompleted` (`0x1770`) if the request is already
 finalized. Off-chain components treat this as success.
 
 | Account | Type | Notes |
 | --- | --- | --- |
-| `sig_request` | PDA, mut | |
-| `payer` | Signer, mut | |
+| `committee` | PDA | Seeds: `[b"committee"]` |
+| `sig_request` | PDA, mut | Seeds: `[b"sig", sig_request.requester, sig_request.payload]` |
+| `submitter` | Signer | Anyone |
 
 ### `update_committee`
 
@@ -114,15 +123,18 @@ Used by `pnpm mpc:update-committee` after a fresh DKG ceremony — see
 #[event]
 pub struct SigRequested {
     pub sig_request: Pubkey,
+    pub requester: Pubkey,
     pub foreign_pk_xy: [u8; 64],
     pub payload: [u8; 32],
-    pub chain_tag: u8,
+    pub chain_tag: [u8; 32],
+    pub derivation_seeds: Vec<u8>,
+    pub domain_id: u32,
 }
 ```
 
-Emitted by `request_signature`. Off-chain signers listen for this and
-decide whether to sign based on whether they can derive the correct tweak
-for `foreign_pk_xy`.
+Emitted by `request_signature`. Off-chain signers listen for this,
+re-derive the tweak from `(requester, derivation_seeds, chain_tag)`, and
+sign `payload` with `group_sk + tweak`.
 
 ### `SigCompleted`
 
@@ -146,49 +158,61 @@ to the foreign chain.
 ```rust
 #[account]
 pub struct Committee {
-    pub group_pk_xy: [u8; 64],
+    pub bump: u8,
+    pub authority: Pubkey,
+    pub group_pk: [u8; 33],
+    pub signer_count: u8,
 }
 ```
 
-PDA seeds: `[b"committee"]`. One per deployment.
+PDA seeds: `[b"committee"]`. One per deployment. `group_pk` sits at byte
+offset 41 (after the 8-byte discriminator, `bump` and `authority`).
 
 ### `SigRequest`
 
 ```rust
 #[account]
 pub struct SigRequest {
+    pub bump: u8,
+    pub requester: Pubkey,
+    pub committee: Pubkey,
     pub foreign_pk_xy: [u8; 64],
+    pub derivation_seeds: Vec<u8>,   // at most 64 bytes
     pub payload: [u8; 32],
-    pub seeds: Vec<u8>,
-    pub chain_tag: u8,
+    pub chain_tag: [u8; 32],
+    pub domain_id: u32,              // 0 = secp256k1 ECDSA
+    pub expires_at: i64,
+    pub completed: bool,
     pub signature: [u8; 64],
     pub recovery_id: u8,
-    pub status: SigStatus,
-}
-
-pub enum SigStatus {
-    Pending,
-    Completed,
 }
 ```
 
-PDA seeds: `[b"sig", caller_program_id, hash(seeds)]`. One per
-`(caller, seeds)` pair.
+PDA seeds: `[b"sig", requester, payload]`. One per `(requester, payload)`
+pair, so the same signer asking for the same bytes twice converges on the
+same account.
 
 ## Errors
 
 | Code | Name | When |
 | --- | --- | --- |
-| `0x1770` | `AlreadyCompleted` | `finalize_signature` called on a `Completed` request |
-| `0x1771` | `SignatureMismatch` | Recovered key did not equal stored `foreign_pk_xy` |
-| `0x1772` | `InvalidRecoveryId` | `recovery_id` not in `{0, 1}` |
-| `0x1773` | `InvalidChainTag` | `chain_tag` not recognized |
+| `0x1770` | `AlreadyCompleted` | `finalize_signature` called on a completed request |
+| `0x1771` | `PubkeyMismatch` | Recovered key did not equal stored `foreign_pk_xy` |
+| `0x1772` | `Expired` | Request past `expires_at` |
+| `0x1773` | `InvalidRecoveryId` | `recovery_id` not in `{0, 1}` |
+| `0x1774` | `SeedsTooLong` | `derivation_seeds` over 64 bytes |
+| `0x1775` | `InvalidGroupPk` | `group_pk` is not a valid compressed secp256k1 point |
+| `0x1776` | `InvalidTweak` | Tweak is zero or not below the group order |
+| `0x1777` | `DerivationFailed` | The recover-based derivation produced no point |
+| `0x1778` | `RecoverFailed` | `secp256k1_recover` syscall failed in `finalize_signature` |
+| `0x1779` | `UnsupportedDomain` | `domain_id` other than `0` |
 
 ## Compute budget
 
 `finalize_signature` uses around 25,000 CU for `secp256k1_recover` plus
-the usual Anchor account-deserialization overhead. The whole instruction
-fits comfortably in the default 200 K CU budget.
+the usual Anchor account-deserialization overhead. `request_signature`
+spends one more `secp256k1_recover` on the derivation. Both fit comfortably
+in the default 200 K CU budget.
 
 ## CPI usage from a caller program
 
@@ -202,18 +226,18 @@ pub fn my_signing_call(ctx: Context<MySigningCall>) -> Result<()> {
     let cpi_ctx = CpiContext::new(
         ctx.accounts.soda_program.to_account_info(),
         RequestSignature {
-            sig_request: ctx.accounts.sig_request.to_account_info(),
             committee: ctx.accounts.committee.to_account_info(),
-            payer: ctx.accounts.payer.to_account_info(),
+            sig_request: ctx.accounts.sig_request.to_account_info(),
+            requester: ctx.accounts.user.to_account_info(),
             system_program: ctx.accounts.system_program.to_account_info(),
         },
     );
     request_signature(
         cpi_ctx,
-        foreign_pk_xy,    // computed off-chain or in the caller
-        seeds,            // arbitrary identifying bytes
+        derivation_seeds, // arbitrary identifying bytes, at most 64
         payload,
-        chain_tag,
+        chain_tag,        // [u8; 32]
+        0,                // domain_id: secp256k1 ECDSA
     )?;
     Ok(())
 }
@@ -221,4 +245,142 @@ pub fn my_signing_call(ctx: Context<MySigningCall>) -> Result<()> {
 
 See `contracts/programs/eth_demo/src/lib.rs` for a complete working
 example that builds an Ethereum legacy RLP transaction and CPIs into
-`soda`.
+`soda`, and `contracts/programs/sui_demo/src/lib.rs` (below) for the Sui
+equivalent.
+
+## `sui_demo` caller
+
+The Sui caller of the primitive, declared as
+`9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`. `demo.sh` deploys it to
+whichever cluster is missing it; as of 2026-09-10 it has run on a local
+validator against Sui testnet and its devnet deploy is pending. Same shape
+as `eth_demo`:
+the program builds the foreign transaction itself, hashes it the way the
+foreign chain will, and commits that hash through `soda::request_signature`.
+**`soda` itself is unchanged**: same committee, same `SigRequest`, same
+`finalize_signature`, same `SigCompleted`.
+
+Two things differ from the EVM path, and both live here rather than in
+`soda`:
+
+- Sui puts the **sender** inside the signed bytes, so the program derives
+  the signer's Sui address before the CPI (`soda` derives the same key again
+  inside; they agree by construction).
+- Sui hashes with **blake2b**, which has no Solana syscall, so a small RFC
+  7693 implementation ships in this crate (`blake2b.rs`). One compression is
+  about 1.2k 64-bit operations and a transfer is two or three blocks, a
+  fraction of one `secp256k1_recover`.
+
+### `sign_sui_transfer`
+
+```rust
+pub fn sign_sui_transfer(
+    ctx: Context<SignSuiTx>,
+    recipient: [u8; 32],
+    amount_mist: u64,
+    gas_payment: Vec<SuiObjectRef>,   // 1..=4
+    gas_price: u64,
+    gas_budget: u64,
+    chain_tag: [u8; 32],              // tag32("sui-testnet") | tag32("sui-devnet")
+    derivation_seeds: Vec<u8>,
+) -> Result<()>
+```
+
+Send `amount_mist` of SUI from the signer's derived Sui address to
+`recipient`. The program builds the whole transaction (the PTB, the sender,
+the gas envelope), so the caller supplies only the recipient, the amount and
+the gas coins it read from a Sui node. What the wallet shows is what will
+happen.
+
+### `sign_sui_tx`
+
+```rust
+pub fn sign_sui_tx(
+    ctx: Context<SignSuiTx>,
+    kind_bytes: Vec<u8>,              // BCS TransactionKind, first byte 0x00, at most 768 bytes
+    gas_payment: Vec<SuiObjectRef>,
+    gas_price: u64,
+    gas_budget: u64,
+    chain_tag: [u8; 32],
+    derivation_seeds: Vec<u8>,
+) -> Result<()>
+```
+
+Any Sui transaction. `kind_bytes` is a BCS `TransactionKind` holding a
+ProgrammableTransaction (for example `@mysten/sui`'s
+`Transaction.build({ onlyTransactionKind: true })`); the program wraps it in
+the same envelope. Move calls, DeFi, NFTs: the primitive does not interpret
+the commands. It guarantees only that the signer authorised exactly these
+bytes and that the derived address is the sender.
+
+```rust
+pub struct SuiObjectRef {
+    pub object_id: [u8; 32],
+    pub version: u64,
+    pub digest: [u8; 32],   // the bytes behind the base58 string a node prints
+}
+```
+
+### Accounts (both instructions)
+
+| Account | Type | Notes |
+| --- | --- | --- |
+| `user` | Signer, mut | The derivation owner; pays for the `SigRequest` |
+| `committee` | PDA | `soda`'s `[b"committee"]` PDA, `seeds::program = soda::ID`; read for `group_pk`. Auto-resolved from the IDL |
+| `sig_request` | mut | `soda`'s `[b"sig", user, payload]` PDA; created by the CPI |
+| `soda_program` | | Checked against `soda::ID` in the handler |
+| `system_program` | Program | |
+
+### What happens on-chain
+
+1. `tweak = sha256("SODA-v1" || user || derivation_seeds || chain_tag)` and
+   `foreign_pk_xy = group_pk + tweak·G` via `soda::derive_onchain`, the same
+   two calls `request_signature` makes.
+2. `sender = blake2b256(0x01 || compress(foreign_pk_xy))`.
+3. `tx_bytes = BCS(TransactionData::V1 { kind, sender, gas_data { payment, owner: sender, price, budget }, expiration: None })`.
+4. `payload = sha256(blake2b256([0, 0, 0] || tx_bytes))`.
+5. CPI `soda::request_signature(derivation_seeds, payload, chain_tag, 0)`.
+6. Emit `SuiTxRequested`.
+
+### `SuiTxRequested`
+
+```rust
+#[event]
+pub struct SuiTxRequested {
+    pub sig_request: Pubkey,
+    pub sender: [u8; 32],   // the derived Sui address the transaction is from
+    pub tx_bytes: Vec<u8>,  // BCS TransactionData: sign, attach 0x01 || sig || pk, submit
+}
+```
+
+The relayer's job is the same as for `EthTxRequested`: cache `tx_bytes` by
+`sig_request`, and on `SigCompleted` attach
+`encodeSuiSignature(signature, compressPk(foreign_pk))` and call
+`executeTransaction`.
+
+### Errors
+
+| Code | Name | When |
+| --- | --- | --- |
+| `0x1770` | `NotProgrammable` | `kind_bytes` does not start with `0x00` |
+| `0x1771` | `KindTooLong` | `kind_bytes` exceeds `MAX_KIND_LEN` (768) |
+| `0x1772` | `BadGasPayment` | `gas_payment` is empty or holds more than `MAX_GAS_COINS` (4) refs |
+
+### Compute
+
+Two on-chain derivations (one here, one inside `soda`), each a
+`secp256k1_recover` syscall, plus blake2b over a few hundred bytes. A
+transfer lands well under the 200 K CU default, but the clients set a 400 K
+CU limit with a `ComputeBudgetProgram` pre-instruction so a longer PTB
+through `sign_sui_tx` never fails on the default budget.
+
+### Tests
+
+12 Rust unit tests (`cargo test -p sui_demo --lib`; 11 hand-written plus
+Anchor's generated `test_id`): blake2b vectors from
+`@noble/hashes` (empty input, `abc`, the 127/128/129-byte block boundary,
+multi-block inputs), and BCS / hash vectors produced by `@mysten/sui` 2.30
+(transfer kind, full envelope with one and two gas coins, address from a
+compressed key, intent digest, signing payload, transaction digest). The
+TypeScript twin in `packages/soda-sdk/src/sui.ts` is tested against the
+same vectors.

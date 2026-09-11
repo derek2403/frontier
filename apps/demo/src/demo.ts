@@ -21,9 +21,13 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AAVE_BORROW_AMOUNT_USDC,
+  AAVE_BORROW_GAS_LIMIT,
+  AAVE_BORROW_MIN_BALANCE_WEI,
   AAVE_DEPOSIT_GAS_LIMIT,
   AAVE_DEPOSIT_MIN_BALANCE_WEI,
   addressToBytes,
+  borrowCalldata,
   chainRpcUrl,
   depositEthCalldata,
   getChain,
@@ -51,14 +55,27 @@ const ETH_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json
 const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
 
 const CHAIN_ID = CHAIN.chainId;
-// The demo signs one thing: an Aave V3 depositETH call. The derived address
-// ends up holding aWETH — a lending position owned by a Solana account.
+
+// DEMO_ACTION picks the Aave call. Both are one EVM transaction through the
+// same pipeline; only the calldata differs.
+//   deposit (default) — WrappedTokenGatewayV3.depositETH: 0.0001 ETH in, the
+//                       derived address receives aWETH.
+//   borrow            — Pool.borrow: 0.1 USDC out against that aWETH. Only
+//                       the position's owner can do this, which is the point.
 // (The old self-transfer mode is gone; it proved the pipeline but said
 // nothing about what the primitive is for.)
-//
-// Deposit + ~300k gas of headroom; the sponsor tops the address up to this.
-const FUNDING_THRESHOLD_WEI = AAVE_DEPOSIT_MIN_BALANCE_WEI; // 0.0015 ETH
-const VALUE_WEI = 100_000_000_000_000n; // 0.0001 ETH per demo run
+type DemoAction = "deposit" | "borrow";
+const ACTION: DemoAction = (() => {
+  const a = (process.env.DEMO_ACTION ?? "deposit").trim().toLowerCase();
+  if (a === "deposit" || a === "borrow") return a;
+  throw new Error(`DEMO_ACTION must be deposit or borrow, got "${a}"`);
+})();
+
+// Gas headroom the sponsor tops the address up to. Same figure for both
+// actions: deposit is 0.0001 ETH + 300k gas, borrow is 0 ETH + 400k gas.
+const FUNDING_THRESHOLD_WEI =
+  ACTION === "borrow" ? AAVE_BORROW_MIN_BALANCE_WEI : AAVE_DEPOSIT_MIN_BALANCE_WEI;
+const VALUE_WEI = ACTION === "borrow" ? 0n : 100_000_000_000_000n; // 0.0001 ETH per deposit
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -341,19 +358,52 @@ async function main() {
   if (!CHAIN.aave) {
     throw new Error(`${CHAIN.name} has no Aave V3 deployment configured`);
   }
-  // `to` is the gateway; `onBehalfOf` inside the calldata is the DERIVED
-  // address, so the aWETH lands at the Solana-controlled account.
-  const txTo = addressToBytes(CHAIN.aave.WETH_GATEWAY);
-  const txData = depositEthCalldata(CHAIN.aave, ethAddressFromPk(foreignPk));
-  const gasLimit = AAVE_DEPOSIT_GAS_LIMIT;
+  // `onBehalfOf` inside either calldata is the DERIVED address, so the aWETH
+  // (deposit) lands at, and the debt (borrow) is booked to, the
+  // Solana-controlled account.
+  const derivedBytes = ethAddressFromPk(foreignPk);
+  const txTo =
+    ACTION === "borrow"
+      ? addressToBytes(CHAIN.aave.POOL)
+      : addressToBytes(CHAIN.aave.WETH_GATEWAY);
+  const txData =
+    ACTION === "borrow"
+      ? borrowCalldata(CHAIN.aave, AAVE_BORROW_AMOUNT_USDC, derivedBytes)
+      : depositEthCalldata(CHAIN.aave, derivedBytes);
+  const gasLimit = ACTION === "borrow" ? AAVE_BORROW_GAS_LIMIT : AAVE_DEPOSIT_GAS_LIMIT;
   const txToHex = bytesToHex(txTo);
+  const toLabel = ACTION === "borrow" ? "Aave V3 Pool" : "WrappedTokenGatewayV3";
+  const actionLine =
+    ACTION === "borrow"
+      ? `Aave V3 Pool.borrow → ${Number(AAVE_BORROW_AMOUNT_USDC) / 1e6} USDC to ${ethAddress}`
+      : `Aave V3 depositETH → aWETH to ${ethAddress}`;
 
   console.log("Tx:");
   console.log(`  chain:     ${CHAIN.name} (chainId ${CHAIN_ID})`);
-  console.log(`  action:    Aave V3 depositETH → aWETH to ${ethAddress}`);
-  console.log(`  to:        ${txToHex}  (WrappedTokenGatewayV3)`);
+  console.log(`  action:    ${actionLine}`);
+  console.log(`  to:        ${txToHex}  (${toLabel})`);
   console.log(`  data:      ${bytesToHex(txData).slice(0, 10)}… (${txData.length} bytes)`);
-  console.log(`  value:     ${VALUE_WEI} wei (0.0001 ETH)`);
+  console.log(`  value:     ${VALUE_WEI} wei (${Number(VALUE_WEI) / 1e18} ETH)`);
+
+  // Simulate before touching Solana. Aave refusing (no collateral, cap,
+  // paused) is a revert inside the tx; eth_estimateGas surfaces the reason
+  // now instead of after two Solana txs and burned gas.
+  if (!DRY_RUN) {
+    try {
+      const est = await sepolia.estimateGas({
+        from: ethAddress,
+        to: txToHex,
+        data: txData,
+        valueWei: VALUE_WEI,
+      });
+      console.log(`  simulated: ok, ${est} gas (limit ${gasLimit})`);
+      if (est > gasLimit) {
+        throw new Error(`estimate ${est} exceeds gas limit ${gasLimit}`);
+      }
+    } catch (e) {
+      throw new Error(`${actionLine} would revert: ${(e as Error).message}`);
+    }
+  }
   console.log(`  nonce:     ${nonce}`);
   console.log(`  gasPrice:  ${gasPrice} wei`);
   console.log(`  gasLimit:  ${gasLimit}`);
@@ -541,10 +591,15 @@ async function main() {
   }
   console.log("");
   console.log(`  from:   ${ethAddress}  (derived from your Solana wallet)`);
-  console.log(`  to:     ${txToHex}  (Aave WrappedTokenGatewayV3)`);
-  console.log(`  value:  0.0001 ETH deposited → aWETH`);
-  console.log(`  aWETH:  ${CHAIN.explorerToken(CHAIN.aave!.A_WETH, ethAddress)}`);
-  console.log(`  hash:  ${ethTxHash}\n`);
+  console.log(`  to:     ${txToHex}  (Aave ${toLabel})`);
+  if (ACTION === "borrow") {
+    console.log(`  action: ${Number(AAVE_BORROW_AMOUNT_USDC) / 1e6} USDC borrowed → USDC at the derived address`);
+    console.log(`  USDC:   ${CHAIN.explorerToken(CHAIN.aave!.USDC_UNDERLYING, ethAddress)}`);
+  } else {
+    console.log(`  action: 0.0001 ETH deposited → aWETH`);
+    console.log(`  aWETH:  ${CHAIN.explorerToken(CHAIN.aave!.A_WETH, ethAddress)}`);
+  }
+  console.log(`  hash:   ${ethTxHash}\n`);
 }
 
 main().catch((e) => {
