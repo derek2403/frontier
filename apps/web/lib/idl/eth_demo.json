@@ -12,7 +12,12 @@
       "docs": [
         "`foreign_pk_xy` is gone: soda now derives the foreign key itself from",
         "the signer, so this program cannot name an address on a user's behalf",
-        "and a malicious client cannot name one at all."
+        "and a malicious client cannot name one at all.",
+        "",
+        "`data` is the transaction calldata. Empty for a plain ETH transfer; a",
+        "contract call (e.g. Aave's depositETH) puts its ABI-encoded selector +",
+        "args here. The program does not interpret it — it is RLP-encoded into",
+        "the payload like any other field, so the signature commits to it."
       ],
       "discriminator": [
         232,
@@ -75,6 +80,10 @@
         {
           "name": "gas_limit",
           "type": "u64"
+        },
+        {
+          "name": "data",
+          "type": "bytes"
         },
         {
           "name": "derivation_seeds",

@@ -28,9 +28,10 @@ import {
   bytesToBigInt,
   computeTweak,
   deriveForeignPk,
+  chainRpcUrl,
   encodeUnsignedLegacy,
-  ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
+  getChain,
   EthRpc,
 } from "@soda-sdk/core";
 
@@ -61,7 +62,11 @@ const ETH_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json
   }
 })();
 
-const SEPOLIA_CHAIN_ID = 11_155_111n;
+// The chain we CLAIM the tx is on (same DEMO_CHAIN as the run). Step 2 then
+// recovers the real chain id from the tx's EIP-155 `v` and checks it against
+// this — so a Base tx audited as Sepolia, or vice versa, fails loudly.
+const CHAIN = getChain(process.env.DEMO_CHAIN);
+const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 
 type Hex = `0x${string}`;
 type SepoliaTx = {
@@ -142,7 +147,7 @@ async function main() {
   }
 
   const sepoliaRpc =
-    process.env.SEPOLIA_RPC_URL ?? "https://rpc.sepolia.org";
+    chainRpcUrl(CHAIN);
   const solanaRpc =
     process.env.SOLANA_RPC_URL ?? "http://127.0.0.1:8899";
   const cluster: "devnet" | "mainnet" | "local" =
@@ -177,7 +182,7 @@ async function main() {
       : `${C.red}reverted on-chain$${C.reset}`;
   console.log(`  status: ${statusLabel}`);
   console.log(`  block:  ${tx.blockNumber ?? "(pending)"}`);
-  console.log(`  ${C.dim}etherscan: https://sepolia.etherscan.io/tx/${ethTxHash}$${C.reset}`);
+  console.log(`  ${C.dim}etherscan: ${CHAIN.explorerTx(ethTxHash)}$${C.reset}`);
 
   // --- 2. Reconstruct the unsigned RLP -> keccak payload ---
   section("2", "Reconstruct the unsigned RLP and keccak it");
@@ -200,7 +205,7 @@ async function main() {
   console.log(`  recovery_id:      ${recoveryId}  ${C.dim}(from v = ${v})$${C.reset}`);
   console.log(`  unsigned RLP:     ${bytesToHex(unsignedRlp)}`);
   console.log(`  keccak(payload):  ${bytesToHex(payload)}`);
-  check("v decodes to Sepolia chainId 11155111", chainIdFromV === SEPOLIA_CHAIN_ID,
+  check(`v decodes to ${CHAIN.name} chainId ${SEPOLIA_CHAIN_ID}`, chainIdFromV === SEPOLIA_CHAIN_ID,
     `got ${chainIdFromV}`);
 
   // --- 3. Find and fetch the matching SigRequest PDA on Solana ---
@@ -298,17 +303,17 @@ async function main() {
   const tweak = computeTweak(
     sr.requester.toBytes(),
     onChainSeeds,
-    ETH_SEPOLIA_CHAIN_TAG,
+    CHAIN.chainTag,
   );
   const expectedForeignPk = deriveForeignPk(groupPkCompressed, tweak);
   const expectedForeignPkXy = expectedForeignPk.subarray(1);
   console.log(`  group_pk:      ${bytesToHex(groupPkCompressed)}`);
   console.log(`  seeds:         ${onChainSeeds.length ? bytesToHex(onChainSeeds) : "(empty)"}  ${C.dim}(read from the on-chain SigRequest)${C.reset}`);
-  console.log(`  tweak:         ${bytesToHex(tweak)}  ${C.dim}(sha256("SODA-v1" || eth_demo_id || seeds || chain_tag))${C.reset}`);
+  console.log(`  tweak:         ${bytesToHex(tweak)}  ${C.dim}(sha256("SODA-v1" || requester || path || chain_tag))${C.reset}`);
   console.log(`  foreign_pk:    ${bytesToHex(expectedForeignPkXy)}`);
   check("derived foreign_pk == on-chain SigRequest.foreign_pk_xy",
     Buffer.from(expectedForeignPkXy).equals(Buffer.from(Uint8Array.from(sr.foreignPkXy))),
-    "anyone can re-derive this address from the eth_demo program ID + the committee's group_pk");
+    "anyone can re-derive this address from the on-chain requester + path + chain tag, plus the committee's group_pk");
 
   // --- 7. Conclusion ---
   console.log(`\n${C.bold}${C.green}══════════════════════════════════════════════════════════════════════════$${C.reset}`);
@@ -320,7 +325,7 @@ async function main() {
 
   • That public key (${C.dim}${bytesToHex(expectedForeignPkXy).slice(0, 18)}…$${C.reset})
     equals ${C.bold}group_pk + tweak·G$${C.reset} where group_pk is the SODA committee's
-    secret share and tweak is a deterministic hash of the eth_demo program ID
+    secret share and tweak is a deterministic hash of the requesting Solana account (+ path)
     + chain tag — meaning ${C.bold}only the holder of the SODA committee's secret share
     can produce signatures that recover to ${tx.from}$${C.reset}.
 

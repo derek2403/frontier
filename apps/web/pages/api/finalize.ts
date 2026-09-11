@@ -20,7 +20,9 @@ import {
 import {
   bigintToBe,
   bytesToBigInt,
+  chainRpcUrl,
   computeTweak,
+  getChain,
   eip155V,
   encodeSignedLegacy,
   encodeUnsignedLegacy,
@@ -54,7 +56,11 @@ function loadOrCreateSignerKey(): Uint8Array {
   return sk;
 }
 
-const SEPOLIA_CHAIN_ID = 11_155_111n;
+// Same DEMO_CHAIN the CLI uses. The chain id goes into the EIP-155 RLP that
+// this route re-encodes, and the payload-recompute guard below fails loudly
+// if it disagrees with what the browser committed on-chain.
+const CHAIN = getChain(process.env.DEMO_CHAIN);
+const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 
 type FinalizeReq = {
   /** Base58 PublicKey of the SigRequest PDA created by sign_eth_transfer */
@@ -69,6 +75,8 @@ type FinalizeReq = {
   gasLimit: string;
   /** Decimal string */
   valueWei: string;
+  /** Hex calldata (with or without 0x). Empty/absent for a plain transfer. */
+  dataHex?: string;
 };
 
 type FinalizeRes = {
@@ -77,15 +85,10 @@ type FinalizeRes = {
   finalizeSignatureTx: string;
   recoveryId: number;
   ethAddress: string;
-  isSelfTransfer: boolean;
 };
 
 function sepoliaRpc(): string {
-  return (
-    process.env.SEPOLIA_RPC_URL ??
-    process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
-    "https://rpc.sepolia.org"
-  );
+  return chainRpcUrl(CHAIN);
 }
 
 function solanaRpc(): string {
@@ -155,8 +158,20 @@ export default async function handler(
     const gasPriceWei = BigInt(body.gasPriceWei);
     const gasLimit = BigInt(body.gasLimit);
     const valueWei = BigInt(body.valueWei);
+    const dataClean = (body.dataHex ?? "").replace(/^0x/, "");
+    if (dataClean.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(dataClean)) {
+      return res.status(400).json({ error: "dataHex must be even-length hex" });
+    }
+    const data = Uint8Array.from(Buffer.from(dataClean, "hex"));
 
-    const connection = new Connection(solanaRpc(), "confirmed");
+    // Explicit wsEndpoint: see the note in apps/demo/src/demo.ts — some
+    // providers reject signatureSubscribe, stalling .rpc() confirmation.
+    const connection = new Connection(solanaRpc(), {
+      commitment: "confirmed",
+      ...(process.env.SOLANA_WS_URL
+        ? { wsEndpoint: process.env.SOLANA_WS_URL }
+        : {}),
+    });
 
     // Read the on-chain SigRequest to recover (payload, foreign_pk_xy,
     // derivation_seeds, chain_tag). We use these to compute the SODA tweak
@@ -285,7 +300,9 @@ export default async function handler(
       gasLimit,
       to: new Uint8Array(recipient),
       valueWeiBe,
-      data: new Uint8Array(0),
+      // Must match what the browser committed on-chain byte-for-byte; the
+      // payload-recompute guard below is what catches a mismatch.
+      data,
       chainId: SEPOLIA_CHAIN_ID,
     };
     // Sanity: the keccak of unsignedRlp must match the on-chain payload
@@ -316,9 +333,6 @@ export default async function handler(
     const fpkXy: Uint8Array = Uint8Array.from(sigRequest.foreignPkXy);
     const ethAddrBytes = keccak_256(fpkXy).subarray(12);
     const ethAddress = "0x" + Buffer.from(ethAddrBytes).toString("hex");
-    const recipientHexNormalized = "0x" + Buffer.from(recipient).toString("hex");
-    const isSelfTransfer =
-      recipientHexNormalized.toLowerCase() === ethAddress.toLowerCase();
 
     // Stash the ETH tx hash for `pnpm verify`.
     try {
@@ -333,7 +347,6 @@ export default async function handler(
       finalizeSignatureTx,
       recoveryId,
       ethAddress,
-      isSelfTransfer,
     };
     return res.status(200).json(result);
   } catch (e) {

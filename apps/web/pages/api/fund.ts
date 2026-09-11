@@ -20,19 +20,19 @@ import {
   ethAddressFromPk,
   EthRpc,
 } from "@soda-sdk/core";
+import { chainRpcUrl, getChain } from "@soda-sdk/core";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 
-const SEPOLIA_CHAIN_ID = 11_155_111n;
+// Same DEMO_CHAIN the CLI uses, so the sponsor funds on the chain the demo
+// will actually broadcast to. Each chain has its own sponsor balance.
+const CHAIN = getChain(process.env.DEMO_CHAIN);
+const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 const FUNDING_THRESHOLD_WEI = 200_000_000_000_000n; // 0.0002 ETH
 const MAX_TOPUP_WEI = 2_000_000_000_000_000n; // 0.002 ETH
 
 function sepoliaRpc(): string {
-  return (
-    process.env.SEPOLIA_RPC_URL ??
-    process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ??
-    "https://ethereum-sepolia-rpc.publicnode.com"
-  );
+  return chainRpcUrl(CHAIN);
 }
 
 function bytesToHex(b: Uint8Array): string {
@@ -48,9 +48,18 @@ export default async function handler(
   }
 
   try {
-    const target = String((req.body as { address?: string })?.address ?? "");
+    const body = req.body as { address?: string; minWei?: string };
+    const target = String(body?.address ?? "");
     if (!/^0x[0-9a-fA-F]{40}$/.test(target)) {
       return res.status(400).json({ error: "address must be 20 bytes hex" });
+    }
+    // Callers that are about to make a contract call need more than a plain
+    // transfer does (an Aave deposit burns ~230k gas). Let them raise the
+    // target, but never above the per-run cap — that cap is the safety net.
+    let threshold = FUNDING_THRESHOLD_WEI;
+    if (body?.minWei != null) {
+      const requested = BigInt(String(body.minWei));
+      threshold = requested > MAX_TOPUP_WEI ? MAX_TOPUP_WEI : requested;
     }
 
     const raw = (process.env.SEPOLIA_FUNDER_KEY ?? "").trim().replace(/^0x/, "");
@@ -71,7 +80,7 @@ export default async function handler(
     // Already funded? Nothing to do — makes the endpoint idempotent, so a
     // double-click or a retry cannot drain the sponsor.
     const current = await rpc.getBalance(target);
-    if (current >= FUNDING_THRESHOLD_WEI) {
+    if (current >= threshold) {
       return res.status(200).json({ funded: true, balanceWei: current.toString() });
     }
 
@@ -80,7 +89,7 @@ export default async function handler(
       ethAddressFromPk(secp256k1.getPublicKey(sk, false)),
     );
 
-    const need = FUNDING_THRESHOLD_WEI - current;
+    const need = threshold - current;
     const topUp = need > MAX_TOPUP_WEI ? MAX_TOPUP_WEI : need;
     const gasPriceWei = (await rpc.getGasPrice()) * 2n;
     const gasLimit = 21_000n;
@@ -121,7 +130,7 @@ export default async function handler(
     for (let i = 0; i < 40; i++) {
       await new Promise((r) => setTimeout(r, 3_000));
       balance = await rpc.getBalance(target).catch(() => balance);
-      if (balance >= FUNDING_THRESHOLD_WEI) {
+      if (balance >= threshold) {
         return res
           .status(200)
           .json({ funded: true, txHash, balanceWei: balance.toString() });
