@@ -1,39 +1,27 @@
 {
   "address": "9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx",
-  "metadata": {
-    "name": "eth_demo",
-    "version": "0.1.0",
-    "spec": "0.1.0",
-    "description": "SODA ETH demo harness — Sepolia value transfer via CPI to soda"
-  },
+  "events": [
+    {
+      "discriminator": [
+        177,
+        159,
+        87,
+        157,
+        4,
+        162,
+        34,
+        5
+      ],
+      "name": "EthTxRequested"
+    }
+  ],
   "instructions": [
     {
-      "name": "sign_eth_transfer",
-      "docs": [
-        "`foreign_pk_xy` is gone: soda now derives the foreign key itself from",
-        "the signer, so this program cannot name an address on a user's behalf",
-        "and a malicious client cannot name one at all.",
-        "",
-        "`data` is the transaction calldata. Empty for a plain ETH transfer; a",
-        "contract call (e.g. Aave's depositETH) puts its ABI-encoded selector +",
-        "args here. The program does not interpret it — it is RLP-encoded into",
-        "the payload like any other field, so the signature commits to it."
-      ],
-      "discriminator": [
-        232,
-        23,
-        138,
-        149,
-        252,
-        89,
-        241,
-        156
-      ],
       "accounts": [
         {
           "name": "user",
-          "writable": true,
-          "signer": true
+          "signer": true,
+          "writable": true
         },
         {
           "name": "committee"
@@ -46,8 +34,8 @@
           "name": "soda_program"
         },
         {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "11111111111111111111111111111111",
+          "name": "system_program"
         }
       ],
       "args": [
@@ -86,32 +74,56 @@
           "type": "bytes"
         },
         {
+          "name": "chain_id",
+          "type": "u64"
+        },
+        {
+          "name": "chain_tag",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
           "name": "derivation_seeds",
           "type": "bytes"
         }
-      ]
-    }
-  ],
-  "events": [
-    {
-      "name": "EthTxRequested",
+      ],
       "discriminator": [
-        177,
-        159,
-        87,
-        157,
-        4,
-        162,
-        34,
-        5
-      ]
+        232,
+        23,
+        138,
+        149,
+        252,
+        89,
+        241,
+        156
+      ],
+      "docs": [
+        "`foreign_pk_xy` is gone: soda now derives the foreign key itself from",
+        "the signer, so this program cannot name an address on a user's behalf",
+        "and a malicious client cannot name one at all.",
+        "",
+        "`data` is the transaction calldata. Empty for a plain ETH transfer; a",
+        "contract call (e.g. Aave's depositETH) puts its ABI-encoded selector +",
+        "args here. The program does not interpret it — it is RLP-encoded into",
+        "the payload like any other field, so the signature commits to it."
+      ],
+      "name": "sign_eth_transfer"
     }
   ],
+  "metadata": {
+    "description": "SODA ETH demo harness — Sepolia value transfer via CPI to soda",
+    "name": "eth_demo",
+    "spec": "0.1.0",
+    "version": "0.1.0"
+  },
   "types": [
     {
       "name": "EthTxRequested",
       "type": {
-        "kind": "struct",
         "fields": [
           {
             "name": "sig_request",
@@ -125,7 +137,8 @@
             "name": "unsigned_rlp",
             "type": "bytes"
           }
-        ]
+        ],
+        "kind": "struct"
       }
     }
   ]
