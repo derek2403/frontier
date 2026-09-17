@@ -253,6 +253,85 @@ It does not get to Bitcoin or a five-operator set.
 
 ---
 
+## 8b. Starter option — $50,000
+
+One outcome, four months: **replace the 2-of-2 under one operator with a
+2-of-3 committee run by three independent operators on devnet**, built on
+the audited threshold crate so the later milestones extend it rather than
+replace it. This is the single change that turns SODA from a demo into
+something a wallet team can evaluate.
+
+Not included, stated plainly: no audit, no TEE attestation, no Bitcoin
+adapter, no mainnet. Each of those is a follow-on milestone from the full
+plan and none of them is worth starting before the committee exists.
+
+### Scope
+
+**S1 · Hardening — month 1 — $6,000**
+
+- Expiry enforced in `finalize_signature`; `fee_bps` hook shipped at zero;
+  `chain_tag` added to `SigRequest` seeds.
+- CI on a public runner: Rust tests, TypeScript tests, IDL drift check,
+  golden derivation vectors shared by Rust and TypeScript.
+
+Acceptance: CI green; expiry and fee covered by program tests.
+
+**S2 · 2-of-3 committee — months 1–3 — $35,000**
+
+- Rust node on NEAR's `threshold-signatures` crate: PedPop+ DKG, triple and
+  presignature pool, additive derivation folded into the presignature, one
+  online signing round.
+- Node essentials only: Solana observation through two independent RPC
+  providers that must agree before signing; RocksDB store with
+  one-time-material consumption markers; mTLS between peers;
+  `finalize_signature` submitter.
+- On-chain: `Committee` gains a participant list and threshold; the live
+  committee key is rotated to the new DKG output with `update_committee`.
+
+Acceptance: 2-of-3 committee on devnet, three operators in three regions
+on three providers; every existing demo (Aave, DeepBook, vault) re-run
+through it; one operator taken offline mid-run with signing continuing.
+
+**S3 · Operators live — month 4 — $4,000**
+
+- Operator kit: one container, health and metrics endpoints, a one-page
+  onboarding guide.
+- Three operators recruited through Superteam Malaysia and Solana
+  validators, running for 30 days at 99% uptime.
+
+Acceptance: 30-day uptime report published; operators named in the repo.
+
+### Budget
+
+| Item | Cost |
+|---|---|
+| Rust / MPC engineer, 3 months at $13,000 | $39,000 |
+| Operator stipends, 3 × $200 × 6 months | $3,600 |
+| Infrastructure: RPC plans for team and operators, devnet deploys | $2,400 |
+| Contingency | $5,000 |
+| **Total** | **$50,000** |
+
+Lead engineering, integration, CI and documentation are founder time,
+contributed in kind (about $18,000 at the full plan's rate).
+
+### Tranches
+
+| Tranche | On completion of | Amount |
+|---|---|---|
+| 1 | Approval | $10,000 |
+| 2 | S1 accepted | $6,000 |
+| 3 | S2 accepted | $28,000 |
+| 4 | S3 accepted | $6,000 |
+
+### What it sets up
+
+Everything in the full plan builds on this node: TEE attestation wraps the
+same container (M3), the audit scopes the same code (M5), and moving from
+2-of-3 to 3-of-5 is a resharing, not a rewrite. If the starter option is
+funded first, the remaining ask for the full plan drops to $198,000.
+
+---
+
 ## 9. Risks and what we do about them
 
 | Risk | Mitigation |
