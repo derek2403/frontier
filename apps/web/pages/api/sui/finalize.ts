@@ -26,15 +26,16 @@ import {
   SuiGraphQl,
   suiGraphqlUrl,
   suiSigningPayload,
+  suiTransactionDigest,
+  type SuiExecuteResult,
 } from "@soda-sdk/core";
 
 import { serverSuiChain, suiChainMismatch } from "@/lib/chain";
 import {
+  ensureFinalized,
   fetchSigRequest,
   openSoda,
   rememberLastTxHash,
-  signRequestPayload,
-  submitFinalizeSignature,
 } from "@/lib/server-signing";
 
 // Same network the browser was built for (see lib/chain.ts).
@@ -162,19 +163,14 @@ export default async function handler(
       });
     }
 
-    const { sigBytes, recoveryId } = await signRequestPayload(
+    // Sign and finalize, or adopt the signature the subscriber already got
+    // recorded. finalize_signature is where secp256k1_recover checks the
+    // signature against foreign_pk_xy on-chain; see ensureFinalized for why
+    // the envelope must use whichever signature the chain holds.
+    const { sigBytes, recoveryId, finalizeSignatureTx } = await ensureFinalized(
       session,
       sigRequestPda,
       sigRequest,
-    );
-
-    // Submit finalize_signature with server wallet as payer. This is where
-    // secp256k1_recover checks the signature against foreign_pk_xy on-chain.
-    const finalizeSignatureTx = await submitFinalizeSignature(
-      session,
-      sigRequestPda,
-      sigBytes,
-      recoveryId,
     );
 
     // Sui wants `flag || r || s || pubkey`; the pubkey is the derived key, and
@@ -184,7 +180,33 @@ export default async function handler(
       compressPk(foreignPk),
     );
     const sui = new SuiGraphQl(suiGraphqlUrl(CHAIN));
-    const exec = await sui.executeTransaction(txBytes, [serializedSig]);
+
+    // The Railway relayer executes the same bytes when it sees SigCompleted.
+    // A Sui digest is blake2b over the bytes, so if execution is refused as a
+    // duplicate we can name the transaction and read its outcome instead of
+    // reporting a failure that did not happen.
+    let exec: SuiExecuteResult;
+    try {
+      exec = await sui.executeTransaction(txBytes, [serializedSig]);
+    } catch (e) {
+      const digest = suiTransactionDigest(txBytes);
+      // Indexing lags finality on Sui, so a transaction that just executed
+      // can read back with a null status for a few seconds. Poll briefly.
+      let seen: Awaited<ReturnType<typeof sui.getTransaction>> = null;
+      for (let i = 0; i < 6 && (!seen || seen.status === null); i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, 2_000));
+        seen = await sui.getTransaction(digest).catch(() => null);
+      }
+      if (!seen) throw e;
+      exec = {
+        digest,
+        status: seen.status ?? "SUCCESS",
+        error:
+          seen.status === null
+            ? "executed by another relayer; final status not indexed yet, check the explorer"
+            : (seen.error ?? null),
+      };
+    }
     const explorerTx = CHAIN.explorerTx(exec.digest);
 
     if (exec.status !== "SUCCESS") {

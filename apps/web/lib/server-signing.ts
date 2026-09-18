@@ -181,6 +181,9 @@ export type SigRequestAccount = {
   payload: ArrayLike<number>;
   chainTag: ArrayLike<number>;
   completed: boolean;
+  /** Set once completed: the signature finalize_signature verified and stored. */
+  signature: ArrayLike<number>;
+  recoveryId: number;
 };
 
 export async function fetchSigRequest(
@@ -197,14 +200,14 @@ export async function fetchSigRequest(
  * Two signing paths, selected by whether MPC_COORDINATOR_URL is set —
  * the same switch apps/demo and lib/run-demo.ts use.
  *
- *   set   → MPC committee. Note the committee cannot currently apply the
- *           derivation tweak (Safeheron shares multiplicatively and P2
- *           holds a Paillier ciphertext of x1 fixed at DKG), so it signs
- *           for the untweaked group_pk and finalize_signature will reject
- *           it. Leave it unset until that is fixed.
- *   unset → v0 single-key signer. Applies the tweak correctly, so the
- *           signature recovers to the per-owner derived address. One key
- *           on disk, so this is not the "no private key anywhere" claim.
+ *   set   → MPC committee. Each node derives the tweak from the on-chain
+ *           request and folds it into the signed message (m + r·t), so the
+ *           signature recovers to the per-owner derived address without
+ *           the protocol ever seeing a tweaked share. See
+ *           apps/mpc-node/src/tweak.ts.
+ *   unset → v0 single-key signer. Applies the tweak to the key directly.
+ *           One key on disk, so this is not the "no private key anywhere"
+ *           claim.
  */
 export async function signRequestPayload(
   session: SodaSession,
@@ -312,6 +315,111 @@ export async function submitFinalizeSignature(
       submitter: session.serverWallet.publicKey,
     })
     .rpc();
+}
+
+/** The signature the chain has recorded, plus which transaction recorded it. */
+export type Finalized = {
+  sigBytes: Buffer;
+  recoveryId: number;
+  finalizeSignatureTx: string;
+  /** "self" if this route submitted finalize_signature, "elsewhere" if it found it already done. */
+  finalizedBy: "self" | "elsewhere";
+};
+
+/** soda's AlreadyCompleted, whichever way Anchor surfaces it. */
+function isAlreadyCompleted(e: unknown): boolean {
+  const msg = String((e as Error)?.message ?? e);
+  const code = (e as { error?: { errorCode?: { code?: string; number?: number } } })
+    ?.error?.errorCode;
+  return (
+    msg.includes("AlreadyCompleted") ||
+    msg.includes("0x1770") ||
+    code?.code === "AlreadyCompleted" ||
+    code?.number === 6000
+  );
+}
+
+/**
+ * The finalize transaction that closed a request somebody else completed.
+ * SigRequest is written exactly twice, at creation and at finalize, so the
+ * newest successful transaction touching it is the finalize.
+ */
+async function findFinalizeTx(
+  session: SodaSession,
+  sigRequestPda: PublicKey,
+): Promise<string> {
+  const sigs = await session.connection.getSignaturesForAddress(sigRequestPda, {
+    limit: 10,
+  });
+  const ok = sigs.find((s) => s.err === null);
+  if (!ok) {
+    throw new Error(
+      `SigRequest ${sigRequestPda.toBase58()} is completed but no successful transaction references it`,
+    );
+  }
+  return ok.signature;
+}
+
+/**
+ * Make sure the request is finalized and return the signature the CHAIN
+ * holds for it.
+ *
+ * With the committee live, the Railway subscriber watches SigRequested and
+ * submits finalize_signature on its own. That is the production shape, and
+ * it means this route is usually racing it. Three outcomes, all fine:
+ *
+ *   - the request is already completed when we look: use the recorded
+ *     signature, skip the coordinator (whose nodes would refuse a completed
+ *     request anyway);
+ *   - we sign and our finalize lands: use ours;
+ *   - we sign and lose the race (AlreadyCompleted): re-read and use theirs.
+ *
+ * The envelope MUST be built from the recorded signature, not the one we
+ * computed. Two valid signatures over the same payload differ (different
+ * nonces), and the verify tool checks that the broadcast (r, s) is the pair
+ * Solana stored. Broadcasting ours after theirs was recorded would fail
+ * that audit and, on the EVM side, produce a second transaction for the
+ * same nonce.
+ */
+export async function ensureFinalized(
+  session: SodaSession,
+  sigRequestPda: PublicKey,
+  sigRequest: SigRequestAccount,
+): Promise<Finalized> {
+  const recorded = async (): Promise<Finalized> => {
+    const fresh = await fetchSigRequest(session, sigRequestPda);
+    if (!fresh.completed) {
+      throw new Error(
+        `finalize_signature reported AlreadyCompleted but SigRequest ${sigRequestPda.toBase58()} is not completed`,
+      );
+    }
+    return {
+      sigBytes: Buffer.from(Uint8Array.from(fresh.signature)),
+      recoveryId: Number(fresh.recoveryId),
+      finalizeSignatureTx: await findFinalizeTx(session, sigRequestPda),
+      finalizedBy: "elsewhere",
+    };
+  };
+
+  if (sigRequest.completed) return recorded();
+
+  const { sigBytes, recoveryId } = await signRequestPayload(
+    session,
+    sigRequestPda,
+    sigRequest,
+  );
+  try {
+    const finalizeSignatureTx = await submitFinalizeSignature(
+      session,
+      sigRequestPda,
+      sigBytes,
+      recoveryId,
+    );
+    return { sigBytes, recoveryId, finalizeSignatureTx, finalizedBy: "self" };
+  } catch (e) {
+    if (!isAlreadyCompleted(e)) throw e;
+    return recorded();
+  }
 }
 
 /** Stash the foreign tx id for `pnpm verify`. Best effort: read-only hosts skip it. */

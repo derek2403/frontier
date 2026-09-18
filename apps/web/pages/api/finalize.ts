@@ -22,11 +22,10 @@ import {
 
 import { chainMismatch, serverChain } from "@/lib/chain";
 import {
+  ensureFinalized,
   fetchSigRequest,
   openSoda,
   rememberLastTxHash,
-  signRequestPayload,
-  submitFinalizeSignature,
 } from "@/lib/server-signing";
 
 // Same chain the browser was built for (see lib/chain.ts). The chain id goes
@@ -112,18 +111,13 @@ export default async function handler(
     const sigRequest = await fetchSigRequest(session, sigRequestPda);
     const payload: Uint8Array = Uint8Array.from(sigRequest.payload);
 
-    const { sigBytes, recoveryId } = await signRequestPayload(
+    // Sign and finalize, or adopt the signature the subscriber already got
+    // recorded — see ensureFinalized for why the envelope must use whichever
+    // one the chain holds.
+    const { sigBytes, recoveryId, finalizeSignatureTx } = await ensureFinalized(
       session,
       sigRequestPda,
       sigRequest,
-    );
-
-    // Submit finalize_signature with server wallet as payer.
-    const finalizeSignatureTx = await submitFinalizeSignature(
-      session,
-      sigRequestPda,
-      sigBytes,
-      recoveryId,
     );
 
     // Reconstruct unsigned RLP (we have all the params), then sign it
@@ -160,9 +154,26 @@ export default async function handler(
     );
     const signedHex = "0x" + Buffer.from(signedRlp).toString("hex");
 
-    // Broadcast.
+    // Broadcast. The Railway relayer broadcasts the same signed bytes when it
+    // sees SigCompleted, so the node may already know this transaction. The
+    // hash is keccak of the signed RLP either way, so "already known" is a
+    // success with a locally computed hash, exactly as apps/demo does.
     const sepolia = new EthRpc(sepoliaRpc());
-    const ethTxHash = await sepolia.sendRawTransaction(signedHex);
+    let ethTxHash: string;
+    try {
+      ethTxHash = await sepolia.sendRawTransaction(signedHex);
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      if (
+        msg.includes("already known") ||
+        msg.includes("ALREADY_EXISTS") ||
+        msg.includes("nonce too low")
+      ) {
+        ethTxHash = "0x" + Buffer.from(keccak_256(signedRlp)).toString("hex");
+      } else {
+        throw e;
+      }
+    }
 
     // Compute derived ETH address from the foreign_pk_xy that was stored.
     const fpkXy: Uint8Array = Uint8Array.from(sigRequest.foreignPkXy);

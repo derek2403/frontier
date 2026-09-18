@@ -770,21 +770,40 @@ project canvas draws the connection lines.
   `serviceInstanceDeploy(environmentId, serviceId, latestCommit: true)`.
 - `RAILWAY_DOCKERFILE_PATH` is how each service picks its Dockerfile.
 
-### The subscriber cannot complete a signature yet
+### The committee is in the signing path — updated 2026-09-18
 
-It runs and subscribes, but two known bugs stop it short of a valid
-`finalize_signature`, both already tracked above:
+Both blockers are gone. `c4ebfa6` made the nodes fold the tweak into the
+signed message (`m + r·t`, see `apps/mpc-node/src/tweak.ts`; six unit tests
+plus `scripts/e2e-mpc.ts` against the real program), and `authorize.ts`
+keys the tweak on `SigRequest.requester`. The on-chain committee was rotated
+to the Railway key `039e4c1ac3…` with `pnpm mpc:update-committee` under
+authority `D5pwjGzq…` (the current program's authority; the `Aji3Ur…` note
+above referred to the old program `2YDHa…`).
 
-1. The on-chain committee holds `02062edf…` (the dev key). The Railway
-   committee's `group_pk` is `9e4c1ac3…`. Migrating needs `update_committee`
-   under authority `Aji3Ur…`, which is on the operator's old machine.
-2. `tweakHex` is silently ignored, so even a matching committee would
-   produce a signature that recovers to `group_pk`, not to the derived
-   `group_pk + tweak·G`.
+Consequences, all deliberate:
 
-The demo therefore still signs through `/api/finalize` with the dev key
-(`signer.mode: "dev-key"`). The MPC committee is live and provably
-2-of-2, but it is not in the demo's signing path.
+- Every derived address changed. The wallet's Base address moved from the
+  dev-key `0xd552…1ce5` to `0x58a8cf7e…f6af` under the Railway key and the
+  unified `evm` tag (`0x845512…1bb2` was the dev key under the new tag,
+  never funded). The old Aave position stays at `0xd552…` and is reachable
+  only by rotating back to the dev key, which the authority can do.
+- With the subscriber and relayer live, `/api/finalize` and
+  `/api/sui/finalize` race them. `ensureFinalized` in
+  `apps/web/lib/server-signing.ts` adopts whichever signature the chain
+  recorded (AlreadyCompleted → re-read `SigRequest.signature`), and both
+  routes treat "already known" / duplicate execution on the destination
+  chain as success with a locally computed hash or digest. The envelope is
+  always built from the recorded signature, because `pnpm verify` checks
+  that the broadcast (r, s) is the pair Solana stored.
+- Vercel needs `MPC_COORDINATOR_URL` + `MPC_COORDINATOR_TOKEN` set and a
+  redeploy; until then the dev-key path refuses with "server signer key
+  does not match the on-chain committee".
+
+**Chain tags are unified to `evm`** (`packages/soda-sdk/src/chains.ts`,
+decided 2026-09-18): one wallet, one EVM address on every EVM chain. Replay
+is stopped by the EIP-155 chain id in the payload. Sui keeps its own tag.
+Changing a tag changes every address derived under it; `chains.test.ts`
+pins the current values.
 
 ## Render MPC deployment — added 2026-09-05 (DELETED — see Railway above)
 
