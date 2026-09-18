@@ -2,7 +2,6 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { AnchorProvider, Program, type Wallet } from "@coral-xyz/anchor";
 import {
   useAnchorWallet,
@@ -1155,12 +1154,9 @@ const data  = ${
           {/* The wallet button lives in step 1 only. A second copy up here
               made "connect" look like page chrome rather than the first act. */}
           <div className="flex items-center gap-2">
-            <Link
-              href="/sui"
-              className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
-            >
-              Sui demo →
-            </Link>
+            {/* The Sui demo link is hidden while the Base Sepolia story is
+                the one being shown. The page still works at /sui — restore a
+                Link here to surface it again. */}
             <a
               href={DOCS_URL}
               target="_blank"
