@@ -775,8 +775,11 @@ function SuiFlow({
 
       // -------- 8. Phantom signs sui_demo::sign_sui_tx --------
       updateStep("signSuiTx", "active");
+      // `processed`, not `confirmed` — see the note in pages/index.tsx. The
+      // finalize route and the MPC nodes each wait for the account to appear
+      // on their own RPC, so nothing downstream needs us to wait here.
       const signTxSig: string = await sendAndWait(connection, () =>
-        builder.rpc(),
+        builder.rpc({ commitment: "processed" }),
       );
 
       updateStep("signSuiTx", "done");

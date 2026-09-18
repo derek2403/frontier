@@ -187,12 +187,40 @@ export type SigRequestAccount = {
   recoveryId: number;
 };
 
+/** How long to wait for a just-created SigRequest to become readable here. */
+const SIG_REQUEST_WAIT_MS = 10_000;
+
+/**
+ * Read the SigRequest, allowing for the account not being visible yet.
+ *
+ * The browser sends its transaction at `processed` and calls straight here,
+ * because waiting for `confirmed` in the browser cost most of the run's
+ * wall-clock. This route's RPC may not have caught up yet, and "not visible
+ * for another 300ms" must not look like "no such request".
+ *
+ * The MPC nodes do the same thing for the same reason. See
+ * `apps/mpc-node/src/authorize.ts`.
+ */
 export async function fetchSigRequest(
   session: SodaSession,
   sigRequestPda: PublicKey,
 ): Promise<SigRequestAccount> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (session.sodaProgram.account as any).sigRequest.fetch(sigRequestPda);
+  const deadline = Date.now() + SIG_REQUEST_WAIT_MS;
+  for (;;) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return await (session.sodaProgram.account as any).sigRequest.fetch(
+        sigRequestPda,
+      );
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      const notYet =
+        msg.includes("Account does not exist") ||
+        msg.includes("could not find account");
+      if (!notYet || Date.now() >= deadline) throw e;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
 }
 
 /**

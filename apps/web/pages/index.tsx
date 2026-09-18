@@ -727,8 +727,14 @@ export default function Home() {
 
       // -------- 6. Phantom signs eth_demo::sign_eth_transfer --------
       updateStep("signEthTransfer", "active");
+      // Wait only for `processed`, not `confirmed`. Devnet confirmation was
+      // measured at 0.9s, 1.5s and 11.1s in three consecutive samples, and
+      // the browser was paying that before it even asked the committee to
+      // sign — 29 of the 31 seconds a run took. Nothing downstream needs
+      // `confirmed` from us: the MPC nodes and the finalize route each read
+      // the account from their own RPC and wait for it to appear.
       const signTxSig: string = await sendAndWait(connection, () =>
-        signBuilder.rpc(),
+        signBuilder.rpc({ commitment: "processed" }),
       );
 
       updateStep("signEthTransfer", "done");
