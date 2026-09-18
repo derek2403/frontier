@@ -12,7 +12,7 @@
  * event decoding (Anchor 0.32.1's addEventListener doesn't dispatch on
  * IDLs whose event field types are in `types`).
  */
-import { Connection, PublicKey, Keypair, TransactionInstruction, Transaction, SystemProgram } from '@solana/web3.js'
+import { Connection, PublicKey, Keypair, TransactionInstruction, Transaction } from '@solana/web3.js'
 // Derivation now happens inside the mpc-node processes, which re-derive it
 // from on-chain state rather than trusting anything this subscriber computes.
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -203,7 +203,7 @@ async function main() {
       if (!bytesEq(disc, sigRequestedDisc)) continue
       try {
         const ev = decodeSigRequested(body)
-        await handleSigRequested(connection, payer, sodaProgramId, groupPkCompressed, ev)
+        await handleSigRequested(connection, payer, sodaProgramId, committeePda, ev)
       } catch (e) {
         log(`${C.red}handler crashed:${C.reset} ${(e as Error).message}`)
       }
@@ -216,7 +216,7 @@ async function handleSigRequested(
   connection: Connection,
   payer: Keypair,
   sodaProgramId: PublicKey,
-  groupPkCompressed: Uint8Array,
+  committeePda: PublicKey,
   ev: SigRequested,
 ): Promise<void> {
   log(`${C.yellow}SigRequested${C.reset} sig_request=${ev.sigRequest.toBase58()} requester=${ev.requester.toBase58()}`)
@@ -251,12 +251,17 @@ async function handleSigRequested(
   // Build finalize_signature ix. Anchor instruction layout: 8-byte global
   // discriminator + borsh-encoded args. Args here are [u8;64] then u8.
   const data = Buffer.concat([Buffer.from(FINALIZE_DISC), signature, Buffer.from([sigResp.v])])
+  // Account order must match soda::FinalizeSignature exactly: committee,
+  // sig_request, submitter. This list predated `committee` being added and
+  // still passed sig_request first, so every submission failed preflight with
+  // AccountDiscriminatorMismatch (0xbba) on the committee account — the
+  // subscriber produced a valid signature and then threw it away.
   const ix = new TransactionInstruction({
     programId: sodaProgramId,
     keys: [
+      { pubkey: committeePda, isSigner: false, isWritable: false },
       { pubkey: ev.sigRequest, isSigner: false, isWritable: true },
-      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: payer.publicKey, isSigner: true, isWritable: false },
     ],
     data,
   })
