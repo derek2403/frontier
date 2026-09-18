@@ -868,60 +868,123 @@ This is a **different key** from the AWS committee, so `pnpm
 mpc:update-committee` must run before the Solana side will accept these
 signatures.
 
-### Confirmed bug: `tweakHex` is silently ignored
+### The tweak bug — FIXED 2026-09-18, and MPC is now the live signer
 
-Measured this session, not just inferred. A `/sign` with
-`tweakHex=0…02` returns a signature that recovers to plain `group_pk`, not
-to `group_pk + 2·G`. The node returns HTTP 200, so it looks like it worked.
+The old text here said this needed GG20 / CGG21. It did not. See
+`apps/mpc-node/src/tweak.ts` for the full argument; the short version is
+that the tweak belongs in the **message**, not in a share:
 
-Cause: `applyTweakP1` edits P1's local `x1`, but P2 holds `cypher_x1`, a
-Paillier encryption of `x1` fixed at DKG time. P1 derives the final `s` from
-that ciphertext, so the local edit has no effect.
+```
+s = k^-1 (m + r*(x+t)) = k^-1 ((m + r*t) + r*x)
+```
 
-`apps/web/pages/api/finalize.ts:185` already documents and works around this
-by sending no tweak. **`apps/mpc-subscriber` does not** — it sends a real
-tweak, so the signature it submits fails the `foreign_pk_xy` comparison in
-`finalize_signature`. Fixing this needs a tweakable protocol (GG20 / CGG21),
-which is the same v1 work already tracked above.
+Signing `m* = m + r*t` with the untweaked committee key yields a valid
+signature for `group_pk + t*G` on the real payload `m`. No protocol
+change: `r` is fixed by `R = k1*k2*G` in messages 1-3, and neither party
+reads the message until after that — P2 first uses it in `step2`, P1 only
+in `step3`. Each node computes `r` from state it already holds, so neither
+trusts the coordinator, and a tweak disagreement makes P1's own signature
+check fail instead of emitting a wrong signature.
+
+What was wrong before: `applyTweakP1` edited P1's local `x1`, but the key
+is shared MULTIPLICATIVELY (`Q = x1*x2*G`) and P2 holds `cypher_x1`, a
+Paillier encryption of `x1` frozen at DKG. P1 derives the final `s` from
+that ciphertext, so no local edit could reach the output. `/sign` returned
+HTTP 200 with a signature for the wrong key, which is why it looked fine.
+
+A second bug hid behind it: `authorize.ts` derived the tweak from a
+`SODA_KNOWN_REQUESTERS` program id while the chain derives it from
+`SigRequest.requester`. No candidate ever matched, so authorization
+refused every request. `requester` is now the first candidate.
+
+Tests: `pnpm mpc:test`. The decisive one asserts the recovered public key —
+the same comparison `finalize_signature` makes — and pins the old failure
+shape. `scripts/mpc-e2e-local.sh` drives the same path against the real
+program on a local validator.
+
+**Verified on devnet 2026-09-18.** Derek ran `mpc:update-committee`, so the
+Committee PDA now holds the MPC key and `signer_count = 2`:
+
+```
+Committee  9mX3oHUmsrYvzXjCo35HhfXufrGZT3hjsLoC74xbA6SS
+authority  D5pwjGzq…            (Derek's wallet, not this laptop's)
+group_pk   039e4c1ac3…          (was 02062edf…, the dev key)
+```
+
+A full Aave V3 deposit ran end to end through the deployed services:
+
+```
+Program log: secp256k1_recover OK -- signature matches stored foreign_pk_xy
+```
+
+- Derived address for wallet `Dzf8khTd…`: `0xaf3abce70cda2954a9b369c8fda0d4a05dbf06d7`
+- Base Sepolia deposit `0x31397cfd…03df`, every `pnpm verify` check MATCH
+- The **Railway relayer** assembled and broadcast it by itself, 0.4s after
+  `SigCompleted` — no local relayer involved
+- aWETH credited to the derived address
+
+Run it with:
+
+```bash
+MPC_COORDINATOR_URL=https://soda-mpc-coordinator-production.up.railway.app \
+MPC_COORDINATOR_TOKEN=<coordinator token> \
+./demo.sh
+```
+
+Two consequences worth remembering:
+
+- **The dev key is now dead on devnet.** `finalize_signature` rejects it.
+  Anything that signs locally (`/api/finalize` without a coordinator URL)
+  fails until Vercel gets `MPC_COORDINATOR_URL` + `MPC_COORDINATOR_TOKEN`.
+- **Every derived address moved**, because `foreign_pk = group_pk + tweak*G`.
+  Old addresses hold small stranded balances and are unsignable. The CLI's
+  `SEPOLIA_FUNDER_KEY` sponsor tops up the new address automatically; the
+  web has no EVM sponsor, so a browser demo needs funding by hand.
+
+Still true for v1: 2-of-2 has no fault tolerance, the shares are plaintext
+JSON, one operator runs both nodes, and the DKG ran in one process on one
+laptop. Those are deployment and protocol-generality problems, not this
+bug.
 
 ## What's next (handed off)
 
-1. **`anchor build`** to generate the program IDL at `contracts/target/idl/soda.json`.
-   The `mpc:update-committee` script reads this file to know the program's instructions.
-   ```
-   cd contracts && anchor build && cd ..
-   ```
+MPC is the live signer on devnet as of 2026-09-18. What remains:
 
-2. **Update the on-chain Committee PDA** with the joint `group_pk` (values above):
-   ```
-   ANCHOR_WALLET=~/.config/solana/id.json \
-   SOLANA_DEVNET_RPC_URL=https://api.devnet.solana.com \
-   pnpm mpc:update-committee
-   ```
-   The wallet at `~/.config/solana/id.json` must match the `Committee.authority` (the
-   wallet that originally called `init_committee`). If it errors with an auth check,
-   that's the cause.
+1. **Point Vercel at the committee.** Set `MPC_COORDINATOR_URL` and
+   `MPC_COORDINATOR_TOKEN` on the `frontier-web` project and redeploy. Until
+   then the web app tries to sign with the dev key, which the chain now
+   rejects.
 
-3. **Run the demo end-to-end through AWS:**
-   ```
-   # terminal 1
-   MPC_COORDINATOR_URL=http://32.198.7.34:8000 pnpm mpc:subscribe
-   # terminal 2
-   ./demo.sh
-   ```
-   Expected flow: subscriber sees `SigRequested` on devnet → POSTs to AWS coord →
-   gets `{r,s,v}` → submits `finalize_signature` → demo continues to Sepolia broadcast.
+2. **Fund the new derived address for whichever wallet demos.** Every address
+   moved with the committee key. The CLI sponsors itself via
+   `SEPOLIA_FUNDER_KEY`; the web has no EVM sponsor.
 
-4. **Wipe local share files** once step 3 succeeds:
+3. **Give the web an EVM sponsor**, or a browser demo stalls on an unfunded
+   address. `apps/web/pages/api/sui/fund.ts` is the shape to copy.
+
+4. **Wipe the local share files.** They exist on this laptop and inside the
+   two Railway nodes. While a laptop holds both, the 2-of-2 claim is weaker
+   than the architecture allows.
    ```
    rm -P apps/mpc-node/shares/share-p1.json apps/mpc-node/shares/share-p2.json
    ```
-   After this, the only places the shares exist on Earth are inside the two EC2 nodes.
-   This is the property MPC is supposed to give: no single host holds both shares.
+   Do this only after deciding you will never need to re-run
+   `mpc:update-committee` for this key, because `MPC_GROUP_PK` can be read
+   off a node's `/health` but the shares cannot be recovered.
 
-5. **Pre-warm the committee before demo day.** First `/sign` after a container restart
-   takes ~1.5s (cold JIT + corepack pull). Run one warmup `/sign` ~5 minutes before any
-   judge sees the demo.
+5. **Re-run the DKG with each role on its own host.** Today `dkg.ts` runs both
+   contexts in one process, so one machine did briefly hold both shares. This
+   is the honest gap to volunteer in a grant conversation, and it is a
+   deployment change, not a protocol change.
+
+6. **Add a CI check that the committed IDLs match the chain.** Stale IDLs have
+   now caused four separate bugs, the latest being a local `anchor deploy`
+   rewriting `address` in `contracts/target/idl/soda.json` and breaking the
+   demo with `RequireKeysEqViolated`. Diff against `anchor idl fetch`.
+
+7. **v1 committee work**, unchanged by this fix: 2-of-3 or better (needs
+   GG20 / CGGMP21, since Lindell '17 does not generalize), separate operators
+   per node, KMS or enclave-wrapped shares, slashing.
 
 ## Pointers
 
