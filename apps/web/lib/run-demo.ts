@@ -23,9 +23,9 @@ import {
   eip155V,
   encodeSignedLegacy,
   encodeUnsignedLegacy,
-  ETH_SEPOLIA_CHAIN_TAG,
   ethAddressFromPk,
   EthRpc,
+  getChain,
 } from "@soda-sdk/core";
 import { ethDemoIdl, sodaIdl } from "./idls";
 
@@ -188,7 +188,10 @@ export async function runDemo(
   const tweak = computeTweak(
     walletKp.publicKey.toBytes(),
     derivationSeeds,
-    ETH_SEPOLIA_CHAIN_TAG,
+    // The configured chain's tag, not a hardcoded Sepolia one: with
+    // DEMO_CHAIN=base-sepolia this route used to derive a different address
+    // than the page showed.
+    getChain(process.env.DEMO_CHAIN).chainTag,
   );
   const foreignPk = deriveForeignPk(groupPkCompressed, tweak);
   const ethAddress = bytesToHex(ethAddressFromPk(foreignPk));

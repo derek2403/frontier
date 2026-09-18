@@ -25,7 +25,25 @@ export type EvmChain = {
   key: EvmChainKey;
   name: string;
   chainId: bigint;
-  /** 32-byte ASCII tag, zero-padded; feeds the SODA derivation tweak. */
+  /**
+   * 32-byte ASCII tag, zero-padded; feeds the SODA derivation tweak.
+   *
+   * Every EVM chain shares ONE tag, so a wallet has ONE EVM address across
+   * Ethereum, Base and any chain added later — the behaviour every wallet
+   * already has. Separating per chain would give the same owner a different
+   * address on each, which means funding each one, and bridging to yourself
+   * landing somewhere you were not looking.
+   *
+   * It costs nothing in safety: replay is stopped by the EIP-155 chain id
+   * inside the signed payload, not by the address. A transaction signed for
+   * chain 84532 is invalid on chain 1 whether or not the addresses match.
+   *
+   * Families still differ (evm / sui / bitcoin) because their address formats
+   * and signing envelopes differ anyway.
+   *
+   * CHANGING A TAG CHANGES EVERY ADDRESS DERIVED UNDER IT. Treat these
+   * strings as frozen once real funds exist.
+   */
   chainTag: Uint8Array;
   /** Keyless public RPC used when the env var below is unset. */
   defaultRpc: string;
@@ -44,13 +62,18 @@ function tag32(s: string): Uint8Array {
   return t;
 }
 
+/**
+ * The single derivation tag for every EVM chain. One wallet, one EVM address,
+ * everywhere — see the note on EvmChain.chainTag.
+ */
+export const EVM_CHAIN_TAG: Uint8Array = tag32("evm");
+
 export const CHAINS: Record<EvmChainKey, EvmChain> = {
   sepolia: {
     key: "sepolia",
     name: "Ethereum Sepolia",
     chainId: 11_155_111n,
-    // Must stay byte-identical to the historical ETH_SEPOLIA_CHAIN_TAG.
-    chainTag: tag32("ethereum-sepolia"),
+    chainTag: EVM_CHAIN_TAG,
     defaultRpc: "https://ethereum-sepolia-rpc.publicnode.com",
     rpcEnv: "SEPOLIA_RPC_URL",
     explorerTx: (h) => `https://sepolia.etherscan.io/tx/${h}`,
@@ -67,7 +90,7 @@ export const CHAINS: Record<EvmChainKey, EvmChain> = {
     key: "base-sepolia",
     name: "Base Sepolia",
     chainId: 84_532n,
-    chainTag: tag32("base-sepolia"),
+    chainTag: EVM_CHAIN_TAG,
     defaultRpc: "https://sepolia.base.org",
     rpcEnv: "BASE_SEPOLIA_RPC_URL",
     explorerTx: (h) => `https://sepolia.basescan.org/tx/${h}`,

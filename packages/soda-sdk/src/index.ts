@@ -29,6 +29,7 @@ export {
   type ChainKey,
   type EvmChain,
   type EvmChainKey,
+  EVM_CHAIN_TAG,
 } from "./chains";
 
 export {
