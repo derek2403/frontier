@@ -21,6 +21,8 @@ export type TimelineStep<K extends string = TimelineKey> = {
   key: K;
   label: string;
   sub: string;
+  /** Which program or deployed service does this step. */
+  actor?: string;
   details?: string[];
 };
 
@@ -28,33 +30,74 @@ export const EVM_TIMELINE_STEPS: TimelineStep[] = [
   {
     key: "signEthTransfer",
     label: "Solana: sign_eth_transfer",
-    sub: "Phantom signs · eth_demo builds RLP and CPIs SODA",
+    sub: "Your wallet is the only human approval in the whole run",
+    actor: "eth_demo program · Solana devnet",
+    details: [
+      "eth_demo builds the EVM transaction on-chain and keccaks it,",
+      "then CPIs soda::request_signature.",
+      "soda derives foreign_pk = group_pk + tweak·G ITSELF, from the",
+      "signing account — you never name an address, so you cannot ask",
+      "for one you do not own.",
+    ],
   },
   {
     key: "sigRequested",
     label: "SigRequested emitted",
-    sub: "SigRequest PDA created on-chain",
+    sub: "The request is now a fact on Solana, not a message to a server",
+    actor: "soda program · SigRequest PDA",
+    details: [
+      "The PDA stores requester, payload, chain_tag and foreign_pk_xy.",
+      "Everything after this reads from that account. Nothing downstream",
+      "is trusted to describe the request correctly.",
+    ],
   },
   {
     key: "signOffChain",
-    label: "Sign the payload",
-    sub: "Signs with group_sk + tweak, so the signature recovers to your derived address",
+    label: "The committee signs",
+    sub: "Two nodes, one signature, neither holds the key",
+    actor: "soda-mpc-coordinator → soda-mpc-node-p1 + p2",
     details: [
+      "soda-mpc-subscriber sees the event and sends only the account address.",
+      "p1 and p2 each read that account from their OWN Solana RPC and",
+      "re-derive the tweak — a compromised caller cannot choose the payload.",
+      "",
       "tweak  = sha256(\"SODA-v1\" || owner || path || chain_tag)",
-      "sk'    = (group_sk + tweak) mod n",
-      "sig    = ecdsa_sign(payload, sk')   [low-s]",
-      "recovers to group_pk + tweak·G — exactly what the program stored",
+      "The key is shared multiplicatively (Q = x1·x2·G), so the tweak goes",
+      "into the MESSAGE instead of a share:",
+      "  s = k⁻¹(m + r·(x+t)) = k⁻¹((m + r·t) + r·x)",
+      "Signing m + r·t under the committee key therefore yields a valid",
+      "signature for group_pk + tweak·G on the real payload.",
+      "",
+      "4-message Lindell '17, p1 → p2 → p1 → p2 → p1. ~0.9s.",
     ],
   },
   {
     key: "finalizeOnChain",
     label: "Solana: finalize_signature",
-    sub: "secp256k1_recover verifies the signature matches the program-derived foreign_pk_xy",
+    sub: "The chain checks the signature before the foreign chain ever sees it",
+    actor: "soda program · secp256k1_recover syscall",
+    details: [
+      "secp256k1_recover(payload, sig, recovery_id) must equal the",
+      "foreign_pk_xy the program derived at request time.",
+      "On a mismatch the request stays incomplete and nothing is broadcast.",
+      "",
+      "Submitted by soda-mpc-subscriber, or by this page if it gets there",
+      "first. Either is fine — the program refuses a second signature.",
+    ],
   },
   {
     key: "broadcastEth",
-    label: "Broadcast to Sepolia",
-    sub: "eth_sendRawTransaction",
+    label: "Broadcast to Base Sepolia",
+    sub: "Assembled from the signature the chain recorded, not the one we computed",
+    actor: "soda-relayer · eth_sendRawTransaction",
+    details: [
+      "soda-relayer caches the unsigned RLP from EthTxRequested, waits for",
+      "SigCompleted, joins them with v = recovery_id + 35 + 2·chain_id,",
+      "and submits. It runs whether or not anyone is watching this page.",
+      "",
+      "It can only broadcast what the chain already verified, so hacking",
+      "the relayer delays a transaction — it cannot forge one.",
+    ],
   },
 ];
 
@@ -89,17 +132,26 @@ export default function Timeline<K extends string = TimelineKey>({
                 {dot(step)}
                 {i < list.length - 1 ? <div className="mt-1 h-8 w-px bg-zinc-800" /> : null}
               </div>
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <div className={step === "idle" ? "text-zinc-500" : "text-zinc-100"}>
                   {s.label}
                 </div>
-                <div className="text-xs text-zinc-500">{s.sub}</div>
+                {s.actor ? (
+                  <div
+                    className={`mt-0.5 font-mono text-[11px] ${
+                      step === "idle" ? "text-zinc-600" : "text-emerald-400/70"
+                    }`}
+                  >
+                    {s.actor}
+                  </div>
+                ) : null}
+                <div className="mt-0.5 text-xs text-zinc-500">{s.sub}</div>
                 {s.details && step !== "idle" ? (
-                  <ul className="mt-2 space-y-0.5 rounded-lg bg-zinc-950/60 px-3 py-2 font-mono text-[11px] text-emerald-300/70">
-                    {s.details.map((d) => (
-                      <li key={d}>{d}</li>
-                    ))}
-                  </ul>
+                  // `whitespace-pre-wrap` so a blank entry stays a blank line
+                  // and long lines wrap instead of scrolling the rail.
+                  <div className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-zinc-950/60 px-3 py-2 font-mono text-[11px] leading-relaxed text-emerald-300/70">
+                    {s.details.join("\n")}
+                  </div>
                 ) : null}
               </div>
             </li>

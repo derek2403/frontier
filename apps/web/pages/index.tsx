@@ -1146,7 +1146,7 @@ const data  = ${
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="text-xl font-semibold">SODA</div>
             <div className="hidden text-sm text-zinc-500 sm:block">
@@ -1171,7 +1171,8 @@ const data  = ${
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+      <div className="mx-auto flex max-w-7xl gap-8 px-6 py-10">
+        <main className="min-w-0 flex-1 space-y-6 lg:max-w-3xl">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">
             Lend and borrow on Aave with nothing but a Solana wallet.
@@ -1416,12 +1417,25 @@ const data  = ${
           </div>
         ) : null}
 
-        <Timeline state={timeline} />
+        <div className="lg:hidden">
+          <Timeline state={timeline} />
+        </div>
 
         <SignedHexView signedRlpHex={signedHex} />
 
 
-      </main>
+        </main>
+
+        {/* The pipeline follows the run rather than sitting under it, so the
+            steps stay visible while the page is working. Hidden below `lg`,
+            where a rail would squeeze the content column; a copy renders
+            inline there instead. */}
+        <aside className="hidden lg:block lg:w-[26rem] lg:shrink-0">
+          <div className="sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
+            <Timeline state={timeline} />
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
