@@ -730,23 +730,56 @@ a deploy is needed (0.05 otherwise).
 
 ## Railway deployment — added 2026-09-18 (CURRENT)
 
-Render is deleted. Railway runs all five services in one project,
-`pagecontrol-signing` (`537f955f-168f-4ef8-b202-241666c927e1`), environment
-`production`, region ams, Hobby plan. Nothing sleeps.
+Render is deleted and Vercel is abandoned (still deployed, still on the
+dead dev key — ignore it, do not demo it). Railway runs all six services
+in one project, `pagecontrol-signing`
+(`537f955f-168f-4ef8-b202-241666c927e1`), environment `production`,
+region ams, Hobby plan. Nothing sleeps.
 
 | Service | Dockerfile | Address |
 |---|---|---|
+| `soda-web` | `apps/web/Dockerfile` | **`https://sodalabs.org`** |
 | `soda-mpc-node-p1` | `apps/mpc-node/Dockerfile` | private only, `:8001` |
 | `soda-mpc-node-p2` | `apps/mpc-node/Dockerfile` | private only, `:8002` |
 | `soda-mpc-coordinator` | `apps/mpc-coordinator/Dockerfile` | `https://soda-mpc-coordinator-production.up.railway.app` |
 | `soda-mpc-subscriber` | `apps/mpc-subscriber/Dockerfile` | no port, worker |
 | `soda-relayer` | `apps/relayer/Dockerfile` | no port, worker |
 
-Only the coordinator is public. The nodes answer on
+Only the coordinator and the web app are public. The nodes answer on
 `SERVICE.railway.internal` over IPv6, which is why `MPC_BIND_HOST`
 defaults to `::` there. Peer URLs use Railway variable references
 (`http://${{soda-mpc-node-p1.RAILWAY_PRIVATE_DOMAIN}}:8001`), so the
-project canvas draws the connection lines.
+project canvas draws the connection lines. `soda-web` reaches the
+coordinator the same way, so the committee is never exposed to the
+browser and the coordinator token never leaves the project.
+
+Confirm the web app is on the committee and not the dev key with
+`/api/group-pk`, which reports `signer.mode` as `mpc` or `dev-key`.
+
+### The domain
+
+`sodalabs.org` is registered at Cloudflare. DNS is four records, all
+**DNS only** — the orange proxy cloud must stay OFF, because with it on
+Cloudflare answers the certificate challenge itself and Railway can never
+prove ownership, so the cert never issues.
+
+| Type | Name | Value |
+|---|---|---|
+| CNAME | `@` | `8g5v2an7.up.railway.app` |
+| TXT | `_railway-verify` | `railway-verify=d9bbb876…f41d0` |
+| CNAME | `www` | `b02zbmrt.up.railway.app` |
+| TXT | `_railway-verify.www` | `railway-verify=0fed0c9a…74534` |
+
+Cloudflare flattens the apex CNAME into an A record, so `dig CNAME
+sodalabs.org` returns nothing and `dig sodalabs.org` returns Railway's
+`69.46.46.104`. That is correct, not a misconfiguration. The check that
+actually tells you Railway is receiving the traffic is the
+`x-railway-67` response header on plain HTTP.
+
+Validation took about 12 minutes, during which the browser shows
+`ERR_CERT_COMMON_NAME_INVALID` because Railway still serves its
+`*.up.railway.app` certificate. That is expected; wait rather than
+changing DNS. Each domain validates separately, so `www` lags the apex.
 
 ### Things that cost time here
 
@@ -950,17 +983,10 @@ bug.
 
 MPC is the live signer on devnet as of 2026-09-18. What remains:
 
-1. **Point Vercel at the committee.** Set `MPC_COORDINATOR_URL` and
-   `MPC_COORDINATOR_TOKEN` on the `frontier-web` project and redeploy. Until
-   then the web app tries to sign with the dev key, which the chain now
-   rejects.
-
-2. **Fund the new derived address for whichever wallet demos.** Every address
-   moved with the committee key. The CLI sponsors itself via
-   `SEPOLIA_FUNDER_KEY`; the web has no EVM sponsor.
-
-3. **Give the web an EVM sponsor**, or a browser demo stalls on an unfunded
-   address. `apps/web/pages/api/sui/fund.ts` is the shape to copy.
+1. **Fund the new derived address for whichever wallet demos.** Every address
+   moved with the committee key. Both the CLI and the web sponsor themselves
+   from `SEPOLIA_FUNDER_KEY` (`apps/web/pages/api/fund.ts`), but the sponsor
+   caps a top-up at 0.002 ETH, so check it has balance before a demo.
 
 4. **Wipe the local share files.** They exist on this laptop and inside the
    two Railway nodes. While a laptop holds both, the 2-of-2 claim is weaker
