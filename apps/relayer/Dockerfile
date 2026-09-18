@@ -24,6 +24,9 @@ WORKDIR /repo
 
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/relayer/node_modules ./apps/relayer/node_modules
+# soda-sdk is source-only, so its own dependencies (@noble/*) are resolved
+# from here at runtime, not bundled.
+COPY --from=deps /repo/packages/soda-sdk/node_modules ./packages/soda-sdk/node_modules
 COPY pnpm-workspace.yaml package.json ./
 COPY packages/soda-sdk ./packages/soda-sdk
 COPY apps/relayer ./apps/relayer

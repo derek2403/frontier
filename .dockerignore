@@ -1,0 +1,16 @@
+# Railway builds from a clean git clone, so its context never has these.
+# This file makes a local `docker build` match that, instead of copying a
+# macOS `node_modules` full of symlinks into a Linux image.
+node_modules
+**/node_modules
+.next
+**/.next
+contracts/target
+.git
+.env
+.env.*
+!.env.example
+*.log
+apps/mpc-node/shares
+keyshare.dev.json
+.last-tx-hash

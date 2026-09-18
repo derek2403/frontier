@@ -24,6 +24,9 @@ WORKDIR /repo
 
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/mpc-subscriber/node_modules ./apps/mpc-subscriber/node_modules
+# soda-sdk is source-only, so its own dependencies (@noble/*) are resolved
+# from here at runtime, not bundled.
+COPY --from=deps /repo/packages/soda-sdk/node_modules ./packages/soda-sdk/node_modules
 COPY pnpm-workspace.yaml package.json ./
 COPY packages/soda-sdk ./packages/soda-sdk
 COPY apps/mpc-subscriber ./apps/mpc-subscriber
