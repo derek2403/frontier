@@ -514,19 +514,42 @@ async function main() {
 
   // --- 7. Solana: soda::finalize_signature (on-chain secp256k1_recover) ---
   console.log("\n[2/3] soda::finalize_signature  (on-chain secp256k1_recover verifies)");
-  const finalSig = await (sodaProgram.methods as any)
-    .finalizeSignature(Array.from(sigBytes), recoveryId)
-    .accounts({
-      committee: committeePda,
-      sigRequest: sigRequestPda,
-      submitter: walletKp.publicKey,
-    })
-    .rpc();
-  console.log(`      ✓ ${finalSig}`);
-  console.log(`      ↗ ${solscanTx(finalSig)}`);
+  // The MPC subscriber watches the same events and races us to this
+  // instruction. Losing is success: the signature is on-chain either way, and
+  // the program refuses a second one with AlreadyCompleted (0x1770).
+  let finalSig: string | null = null;
+  try {
+    finalSig = await (sodaProgram.methods as any)
+      .finalizeSignature(Array.from(sigBytes), recoveryId)
+      .accounts({
+        committee: committeePda,
+        sigRequest: sigRequestPda,
+        submitter: walletKp.publicKey,
+      })
+      .rpc();
+    console.log(`      ✓ ${finalSig}`);
+    console.log(`      ↗ ${solscanTx(finalSig)}`);
+  } catch (e) {
+    const msg = (e as Error).message ?? "";
+    if (!/AlreadyCompleted|0x1770|already completed/i.test(msg)) throw e;
+    console.log("      ✓ already finalized by the MPC subscriber — fine");
+  }
 
-  const sigRequest = await (sodaProgram.account as any).sigRequest.fetch(sigRequestPda);
-  if (!sigRequest.completed) throw new Error("SigRequest still incomplete");
+  // Read back the flag rather than trust the send. `rpc()` returns at the
+  // provider's commitment, so an immediate fetch can still see the old
+  // account and report a successful run as a failure.
+  let sigRequest: { completed: boolean } | null = null;
+  for (let i = 0; i < 10; i++) {
+    sigRequest = await (sodaProgram.account as any).sigRequest.fetch(sigRequestPda);
+    if (sigRequest?.completed) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (!sigRequest?.completed) {
+    throw new Error(
+      "SigRequest is still not marked completed after 10s. The " +
+        "finalize_signature transaction above may have been dropped.",
+    );
+  }
 
   // --- 8. Assemble + broadcast ---
   const v = eip155V(recoveryId, CHAIN_ID);
@@ -587,7 +610,8 @@ async function main() {
   console.log(`  ETH side (${CHAIN.name}):  ${CHAIN.explorerTx(ethTxHash)}`);
   if (solanaCluster !== "local") {
     console.log(`  Solana side (${solanaCluster}):  ${solscanTx(signTxSig)}`);
-    console.log(`                          ${solscanTx(finalSig)}`);
+    // Absent when the MPC subscriber finalized first, which is a normal race.
+    if (finalSig) console.log(`                          ${solscanTx(finalSig)}`);
   }
   console.log("");
   console.log(`  from:   ${ethAddress}  (derived from your Solana wallet)`);
