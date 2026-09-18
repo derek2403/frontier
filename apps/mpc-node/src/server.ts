@@ -23,6 +23,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { loadShare, type Role } from './share.js'
 import { setSession, getSession, dropSession } from './sessions.js'
 import { authorize, AUTHORIZATION_ENABLED } from './authorize.js'
+import { tweakedMessage, rFromR1, rFromX } from './tweak.js'
 
 const { TPCEcdsaSign } = pkg
 
@@ -106,20 +107,14 @@ app.post<{
     return reply.code(403).send({ error: (err as Error).message })
   }
 
+  // The context starts on the real payload. The SODA tweak is folded into
+  // the message later, in step3, once `r` exists — see `tweak.ts`.
   const m = new BN(authorized.payloadHex, 16)
-  // NOTE: applyTweakP1 was removed — it was a verified no-op. Safeheron shares
-  // the key multiplicatively (Q = x1*x2*G) and P2 holds a Paillier ciphertext
-  // of x1 fixed at DKG, so mutating P1's local x1 cannot change the output.
-  // The real fix is additive, applied on P2's side of message 4; until it
-  // lands, signatures recover to plain group_pk and finalize_signature will
-  // reject them. Authorization is still enforced above.
-  const shareJson = share.share
-
   const ctx = await TPCEcdsaSign.P1Context.createContext(
-    JSON.stringify(shareJson),
+    JSON.stringify(share.share),
     m,
   )
-  setSession(sessionId, ctx)
+  setSession(sessionId, ctx, authorized.tweakHex)
   const message1 = ctx.step1()
   return { messageBase64: Buffer.from(message1).toString('base64') }
 })
@@ -133,12 +128,12 @@ app.post<{
   Body: { sessionId: string; messageBase64: string; sigRequestPubkey?: string }
 }>('/sign/step', async (req, reply) => {
   const { sessionId, messageBase64, sigRequestPubkey } = req.body
-  let ctx = getSession(sessionId)
+  let session = getSession(sessionId)
 
   // P2's first call also bootstraps: it needs the payload to set up context.
   // It re-authorizes independently rather than trusting P1 or the coordinator
   // — that independence is the point of the check.
-  if (!ctx) {
+  if (!session) {
     if (ROLE !== 'p2') {
       return reply.code(404).send({ error: 'no such session' })
     }
@@ -160,13 +155,15 @@ app.post<{
     }
 
     const m = new BN(authorized.payloadHex, 16)
-    ctx = await TPCEcdsaSign.P2Context.createContext(
+    const fresh = await TPCEcdsaSign.P2Context.createContext(
       JSON.stringify(share.share),
       m,
     )
-    setSession(sessionId, ctx)
+    setSession(sessionId, fresh, authorized.tweakHex)
+    session = getSession(sessionId)!
   }
 
+  const ctx = session.context
   const incoming = Buffer.from(messageBase64, 'base64')
 
   // Dispatch on which class of context this is. The lib's step methods are
@@ -183,6 +180,16 @@ app.post<{
       const out = c.step2(incoming)
       return { messageBase64: Buffer.from(out).toString('base64') }
     } else if (expectedStep === 3) {
+      // R is fixed by step2, so `r` exists now. Replace the message with
+      // `m + r*t` so the signature belongs to `group_pk + t*G` — see
+      // `tweak.ts`. P1's own step3 then checks the result against the
+      // committee key, which fails loudly if P2 used a different tweak.
+      const anyCtx = c as unknown as { R: { getX(): BN }; m: BN }
+      anyCtx.m = tweakedMessage(
+        anyCtx.m,
+        rFromX(anyCtx.R.getX()),
+        session.tweakHex,
+      )
       c.step3(incoming)
       const [r, s, v] = c.exportSig()
       dropSession(sessionId)
@@ -205,6 +212,16 @@ app.post<{
       const out = c.step1(incoming)
       return { messageBase64: Buffer.from(out).toString('base64') }
     } else if (expectedStep === 2) {
+      // step2 is where the message enters the homomorphic ciphertext, so the
+      // tweak has to be folded in first. R1 arrives in this message, and
+      // R = k2*R1 gives the same `r` step2 computes for itself.
+      const anyCtx = c as unknown as { k2: BN; m: BN }
+      const r1 = TPCEcdsaSign.Message3.fromProtobuf(incoming).proof_R1.pk
+      anyCtx.m = tweakedMessage(
+        anyCtx.m,
+        rFromR1(Uint8Array.from(r1.encodeCompressed('array')), anyCtx.k2),
+        session.tweakHex,
+      )
       const out = c.step2(incoming)
       return { messageBase64: Buffer.from(out).toString('base64') }
     } else {

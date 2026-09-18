@@ -165,10 +165,6 @@ export async function authorize(
   if (!AUTHORIZATION_ENABLED) {
     throw new Error('authorization not configured (set SODA_PROGRAM_ID)')
   }
-  if (KNOWN_REQUESTERS.length === 0) {
-    throw new Error('no SODA_KNOWN_REQUESTERS configured')
-  }
-
   let pubkey: PublicKey
   try {
     pubkey = new PublicKey(sigRequestPubkey)
@@ -193,8 +189,19 @@ export async function authorize(
     throw new Error('request expired')
   }
 
-  // Find which known requester program reproduces the stored foreign_pk.
-  for (const programId of KNOWN_REQUESTERS) {
+  // The tweak is keyed on the OWNER of the derived address, which the chain
+  // records as `SigRequest.requester` — a wallet, or a PDA when a program
+  // owns the address. That is the first candidate and the one that matches
+  // in practice. The configured program ids stay as fallbacks for older
+  // requests built when the derivation was keyed on the calling program.
+  // Whichever candidate reproduces the stored `foreign_pk_xy` is correct by
+  // construction, so trying several is a lookup, not a guess.
+  const candidates = [
+    sr.requester.toBase58(),
+    ...KNOWN_REQUESTERS.filter((k) => k !== sr.requester.toBase58()),
+  ]
+
+  for (const programId of candidates) {
     const tweak = computeTweak(
       new PublicKey(programId).toBytes(),
       sr.derivationSeeds,
