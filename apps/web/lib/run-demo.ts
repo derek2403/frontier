@@ -28,6 +28,7 @@ import {
   getChain,
 } from "@soda-sdk/core";
 import { ethDemoIdl, sodaIdl } from "./idls";
+import { loadServerWallet } from "./server-signing";
 
 const REPO_ROOT = resolve(process.cwd(), "../..");
 const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
@@ -87,12 +88,13 @@ function loadOrCreateSignerKey(): Uint8Array {
   return sk;
 }
 
+/**
+ * Use the shared loader rather than a second copy. This one read a file path
+ * only, so it could not work on a host with no filesystem to put a key on —
+ * `loadServerWallet` also accepts `ANCHOR_WALLET_JSON`.
+ */
 function loadSolanaWallet(): Keypair {
-  const path =
-    process.env.ANCHOR_WALLET ?? resolve(homedir(), ".config/solana/id.json");
-  return Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(readFileSync(path, "utf8"))),
-  );
+  return loadServerWallet();
 }
 
 function hexToBytes(hex: string): Uint8Array {
