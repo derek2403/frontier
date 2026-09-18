@@ -32,6 +32,8 @@ const CHAIN = serverChain();
 const SEPOLIA_CHAIN_ID = CHAIN.chainId;
 const FUNDING_THRESHOLD_WEI = 200_000_000_000_000n; // 0.0002 ETH
 const MAX_TOPUP_WEI = 2_000_000_000_000_000n; // 0.002 ETH
+/** Aim for this many runs' worth of gas, so most runs need no top-up at all. */
+const TOPUP_HEADROOM = 4n;
 
 function sepoliaRpc(): string {
   return chainRpcUrl(CHAIN);
@@ -97,7 +99,14 @@ export default async function handler(
       ethAddressFromPk(secp256k1.getPublicKey(sk, false)),
     );
 
-    const need = threshold - current;
+    // Top up with headroom, not to exactly the threshold. Sending only the
+    // shortfall left the address one run's gas above the bar, so the very
+    // next run fell under it again and every single run paid for a sponsor
+    // transaction and its confirmation wait. Aiming higher means most runs
+    // skip this endpoint entirely at the `current >= threshold` check above.
+    // MAX_TOPUP_WEI stays the safety net on any one transfer.
+    const aim = threshold * TOPUP_HEADROOM;
+    const need = aim - current;
     const topUp = need > MAX_TOPUP_WEI ? MAX_TOPUP_WEI : need;
     const gasPriceWei = (await rpc.getGasPrice()) * 2n;
     const gasLimit = 21_000n;
@@ -134,15 +143,19 @@ export default async function handler(
 
     // Wait for the balance to actually move rather than for a receipt — the
     // balance is what the next step depends on.
+    // Poll before sleeping, and poll often. Base Sepolia produces a block
+    // roughly every 2s, so a 3s sleep taken first made the fastest possible
+    // answer 3s and a near miss 6s — pure waiting, in front of a pipeline
+    // that then finishes in 1.5s.
     let balance = current;
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 3_000));
+    for (let i = 0; i < 160; i++) {
       balance = await rpc.getBalance(target).catch(() => balance);
       if (balance >= threshold) {
         return res
           .status(200)
           .json({ funded: true, txHash, balanceWei: balance.toString() });
       }
+      await new Promise((r) => setTimeout(r, 750));
     }
     return res.status(504).json({
       error: "sponsor tx did not confirm in time",

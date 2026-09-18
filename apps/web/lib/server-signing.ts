@@ -191,6 +191,13 @@ export type SigRequestAccount = {
 const SIG_REQUEST_WAIT_MS = 10_000;
 
 /**
+ * How long to let the MPC subscriber finalize before this route does it too.
+ * The subscriber takes ~1.3s end to end, so this is that plus headroom. If it
+ * is down, we lose this much and then do the work ourselves.
+ */
+const SUBSCRIBER_GRACE_MS = 2_500;
+
+/**
  * Read the SigRequest, allowing for the account not being visible yet.
  *
  * The browser sends its transaction at `processed` and calls straight here,
@@ -335,6 +342,11 @@ export async function submitFinalizeSignature(
   sigBytes: Uint8Array,
   recoveryId: number,
 ): Promise<string> {
+  // `processed`, not the provider's `confirmed`. What the pitch requires is
+  // that Solana EXECUTED secp256k1_recover before the foreign chain sees the
+  // transaction, and `processed` means exactly that: it ran in a slot. Waiting
+  // for `confirmed` on top cost the devnet tail — 0.9s to 11.1s in three
+  // consecutive samples — in front of a broadcast that takes 180ms.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const send = (): Promise<string> =>
     (session.sodaProgram.methods as any)
@@ -344,7 +356,7 @@ export async function submitFinalizeSignature(
         sigRequest: sigRequestPda,
         submitter: session.serverWallet.publicKey,
       })
-      .rpc();
+      .rpc({ commitment: "processed" });
 
   // Anchor gives up after 30 seconds with an error that says outright it is
   // "unknown if it succeeded or failed". On devnet it usually did succeed, a
@@ -438,6 +450,18 @@ export async function ensureFinalized(
   };
 
   if (sigRequest.completed) return recorded();
+
+  // Give the subscriber its moment first. It sees the same event and
+  // finalizes in about 1.3s, and when it wins there is nothing left to do:
+  // no MPC round trip and no Solana transaction from this route at all. That
+  // is both the faster path and the production-shaped one, so prefer it
+  // instead of racing it and discarding the loser's work.
+  const waitUntil = Date.now() + SUBSCRIBER_GRACE_MS;
+  while (Date.now() < waitUntil) {
+    await new Promise((r) => setTimeout(r, 300));
+    const fresh = await fetchSigRequest(session, sigRequestPda);
+    if (fresh.completed) return recorded();
+  }
 
   const { sigBytes, recoveryId } = await signRequestPayload(
     session,
