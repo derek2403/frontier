@@ -25,7 +25,19 @@ import { fileURLToPath } from 'node:url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const REPO_ROOT = resolve(__dirname, '../../..')
-const SODA_IDL_PATH = resolve(REPO_ROOT, 'contracts/target/idl/soda.json')
+/**
+ * `contracts/target/idl/` is a build output and is gitignored, so it does not
+ * exist in a container built from the repo. `apps/web/lib/idl/` holds the same
+ * files, committed, refreshed from `anchor idl fetch`. Prefer the build output
+ * when it is there — it is what a local `anchor build` just produced.
+ */
+function idlPath(name: string): string {
+  const built = resolve(REPO_ROOT, `contracts/target/idl/${name}.json`)
+  if (existsSync(built)) return built
+  return resolve(REPO_ROOT, `apps/web/lib/idl/${name}.json`)
+}
+
+const SODA_IDL_PATH = idlPath('soda')
 
 ;(() => {
   const envPath = resolve(REPO_ROOT, '.env')
@@ -52,6 +64,27 @@ const COORDINATOR_URL = (
 const COORDINATOR_TOKEN = process.env.MPC_COORDINATOR_TOKEN ?? ''
 const ANCHOR_WALLET =
   process.env.ANCHOR_WALLET ?? `${homedir()}/.config/solana/id.json`
+
+/**
+ * Load the fee payer. `ANCHOR_WALLET_JSON` carries the keypair array itself,
+ * for platforms that have no filesystem to put a key file on. `ANCHOR_WALLET`
+ * names a file, which is how the CLI and docker compose do it.
+ */
+function loadPayer(): Keypair {
+  const inline = process.env.ANCHOR_WALLET_JSON?.trim()
+  if (inline) {
+    return Keypair.fromSecretKey(new Uint8Array(JSON.parse(inline)))
+  }
+  if (!existsSync(ANCHOR_WALLET)) {
+    throw new Error(
+      `No Solana keypair. Set ANCHOR_WALLET_JSON to the keypair array, ` +
+        `or put a keypair file at ${ANCHOR_WALLET}.`,
+    )
+  }
+  return Keypair.fromSecretKey(
+    new Uint8Array(JSON.parse(readFileSync(ANCHOR_WALLET, 'utf8'))),
+  )
+}
 
 // ---- borsh reader for SigRequested ----
 
@@ -135,8 +168,7 @@ async function main() {
   const sigRequestedDisc = discFromIdl('SigRequested')
 
   const connection = new Connection(SOLANA_RPC, 'confirmed')
-  const payerSecret = new Uint8Array(JSON.parse(readFileSync(ANCHOR_WALLET, 'utf8')))
-  const payer = Keypair.fromSecretKey(payerSecret)
+  const payer = loadPayer()
 
   // Read on-chain group_pk so we can sanity-check incoming foreign_pk_xy.
   const [committeePda] = PublicKey.findProgramAddressSync(

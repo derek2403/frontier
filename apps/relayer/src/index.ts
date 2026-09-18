@@ -42,6 +42,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   bytesToHex0x,
+  chainById,
   decodeUnsignedLegacy,
   eip155V,
   encodeSignedLegacy,
@@ -67,9 +68,21 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "../../..");
-const SODA_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/soda.json");
-const ETH_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json");
-const SUI_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/sui_demo.json");
+/**
+ * `contracts/target/idl/` is a build output and is gitignored, so it does not
+ * exist in a container built from the repo. `apps/web/lib/idl/` holds the same
+ * files, committed, refreshed from `anchor idl fetch`. Prefer the build output
+ * when it is there — it is what a local `anchor build` just produced.
+ */
+function idlPath(name: string): string {
+  const built = resolve(REPO_ROOT, `contracts/target/idl/${name}.json`);
+  if (existsSync(built)) return built;
+  return resolve(REPO_ROOT, `apps/web/lib/idl/${name}.json`);
+}
+
+const SODA_IDL_PATH = idlPath("soda");
+const ETH_DEMO_IDL_PATH = idlPath("eth_demo");
+const SUI_DEMO_IDL_PATH = idlPath("sui_demo");
 
 (() => {
   const envPath = resolve(REPO_ROOT, ".env");
@@ -181,9 +194,23 @@ async function main() {
   const sepolia = new EthRpc(SEPOLIA_RPC);
   const sui = new SuiGraphQl(SUI_GRAPHQL);
 
+  // Ask the EVM endpoint which chain it serves, so a misconfigured RPC is
+  // named at boot instead of at broadcast time. A failure here is not fatal:
+  // the Sui path does not need it.
+  let rpcChainId: bigint | null = null;
+  try {
+    rpcChainId = BigInt(await sepolia.call<string>("eth_chainId", []));
+  } catch {
+    rpcChainId = null;
+  }
+  const rpcChain = rpcChainId === null ? undefined : chainById(rpcChainId);
+
   console.log(`${C.cyan}┏━ SODA relayer ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${C.reset}`);
   console.log(`${C.cyan}┃${C.reset}  Solana RPC:   ${SOLANA_RPC.split("?")[0]}`);
-  console.log(`${C.cyan}┃${C.reset}  Sepolia RPC:  ${SEPOLIA_RPC.split("?")[0]}`);
+  console.log(
+    `${C.cyan}┃${C.reset}  EVM RPC:      ${SEPOLIA_RPC.split("?")[0]}` +
+      `  (${rpcChain ? rpcChain.name : rpcChainId !== null ? `chain ${rpcChainId}` : "chain unknown"})`,
+  );
   console.log(`${C.cyan}┃${C.reset}  Sui GraphQL:  ${SUI_GRAPHQL.split("?")[0]}  (${SUI_CHAIN.name})`);
   console.log(`${C.cyan}┃${C.reset}  SODA program: ${sodaProgramId.toBase58()}`);
   console.log(`${C.cyan}┃${C.reset}  eth_demo:     ${ethDemoProgramId.toBase58()}`);
@@ -284,10 +311,27 @@ async function main() {
       event.signature.subarray(32, 64),
     );
     const signedHex = bytesToHex(signedRlp);
+
+    // The event names its own chain. This relayer has one EVM endpoint, so a
+    // mismatch means SEPOLIA_RPC_URL points at a different chain than the
+    // program signed for. The node would reject the transaction with an
+    // opaque error, so say the real cause first.
+    const target = chainById(cached.chainId);
+    if (target && rpcChainId !== null && rpcChainId !== cached.chainId) {
+      log(
+        `  ${C.red}wrong RPC:${C.reset} the transaction is for ${target.name} ` +
+          `(chain ${cached.chainId}) but SEPOLIA_RPC_URL serves chain ${rpcChainId}. ` +
+          `Point SEPOLIA_RPC_URL at ${target.name}.`,
+      );
+      return;
+    }
+
     try {
       const txHash = await sepolia.sendRawTransaction(signedHex);
       log(`  ${C.green}broadcast✓${C.reset} ${txHash}`);
-      log(`             https://sepolia.etherscan.io/tx/${txHash}`);
+      log(
+        `             ${target ? target.explorerTx(txHash) : `https://sepolia.etherscan.io/tx/${txHash}`}`,
+      );
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("already known") || msg.includes("ALREADY_EXISTS") || msg.includes("nonce too low")) {
