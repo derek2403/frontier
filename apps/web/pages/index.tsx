@@ -1,4 +1,4 @@
-import { type Connection, PublicKey, SystemProgram } from "@solana/web3.js";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -45,6 +45,7 @@ import { secp256k1 as secp256k1Curves } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { QRCodeSVG } from "qrcode.react";
 import { ETH_DEMO_PROGRAM_ID, ethDemoIdl, sodaIdl, SODA_PROGRAM_ID } from "@/lib/idls";
+import { sendAndWait } from "@/lib/solana-confirm";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
 // out of the Next 16 SSR pass (its internals touch `window`).
@@ -92,55 +93,6 @@ function bytesToHex(b: Uint8Array): string {
   return "0x" + Array.from(b).map((n) => n.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Send a Solana transaction and do not give up on it too early.
- *
- * Anchor's `.rpc()` waits through web3.js `confirmTransaction`, which throws
- * `TransactionExpiredTimeoutError` after 30 seconds. That error explicitly
- * says it is "unknown if it succeeded or failed" — and on devnet it usually
- * did succeed, a few seconds later. Failing the run there is wrong twice
- * over: it reports a working pipeline as broken, and the user has already
- * approved in their wallet and paid.
- *
- * So on a timeout we keep the signature the error carries and poll for its
- * status. A real on-chain error still throws, and a transaction that never
- * lands still fails — just after a deadline worth waiting for.
- */
-async function sendAndWait(
-  connection: Connection,
-  send: () => Promise<string>,
-  extraWaitMs = 90_000,
-): Promise<string> {
-  let signature: string;
-  try {
-    return await send();
-  } catch (e) {
-    const sig = (e as { signature?: string }).signature;
-    if (!sig) throw e;
-    signature = sig;
-  }
-
-  const deadline = Date.now() + extraWaitMs;
-  while (Date.now() < deadline) {
-    const { value } = await connection.getSignatureStatuses([signature]);
-    const status = value[0];
-    if (status?.err) {
-      throw new Error(
-        `transaction ${signature} failed on-chain: ${JSON.stringify(status.err)}`,
-      );
-    }
-    if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
-      return signature;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  throw new Error(
-    `transaction ${signature} did not confirm within ${
-      (extraWaitMs + 30_000) / 1000
-    }s. It may still land — check it on Solana Explorer before retrying, ` +
-      `because retrying creates the same SigRequest PDA and will fail.`,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Actions. Every action is the same pipeline — Phantom signs sign_eth_transfer,

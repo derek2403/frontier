@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { sodaIdl } from "@/lib/idls";
+import { sendAndWait } from "@/lib/solana-confirm";
 
 export const REPO_ROOT = resolve(process.cwd(), "../..");
 // Read by demo.sh so `pnpm verify` / `pnpm verify:sui` can chain off the last
@@ -307,14 +308,21 @@ export async function submitFinalizeSignature(
   recoveryId: number,
 ): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (session.sodaProgram.methods as any)
-    .finalizeSignature(Array.from(sigBytes), recoveryId)
-    .accounts({
-      committee: session.committeePda,
-      sigRequest: sigRequestPda,
-      submitter: session.serverWallet.publicKey,
-    })
-    .rpc();
+  const send = (): Promise<string> =>
+    (session.sodaProgram.methods as any)
+      .finalizeSignature(Array.from(sigBytes), recoveryId)
+      .accounts({
+        committee: session.committeePda,
+        sigRequest: sigRequestPda,
+        submitter: session.serverWallet.publicKey,
+      })
+      .rpc();
+
+  // Anchor gives up after 30 seconds with an error that says outright it is
+  // "unknown if it succeeded or failed". On devnet it usually did succeed, a
+  // few seconds later, and a 500 here reports a signature the chain already
+  // verified as a failed run.
+  return sendAndWait(session.connection, send, "finalize_signature");
 }
 
 /** The signature the chain has recorded, plus which transaction recorded it. */

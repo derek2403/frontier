@@ -60,6 +60,7 @@ import Timeline, {
   type TimelineStep,
 } from "@/components/Timeline";
 import { SODA_PROGRAM_ID, SUI_DEMO_PROGRAM_ID, suiDemoIdl } from "@/lib/idls";
+import { sendAndWait } from "@/lib/solana-confirm";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
 // out of the Next 16 SSR pass (its internals touch `window`).
@@ -774,7 +775,9 @@ function SuiFlow({
 
       // -------- 8. Phantom signs sui_demo::sign_sui_tx --------
       updateStep("signSuiTx", "active");
-      const signTxSig: string = await builder.rpc();
+      const signTxSig: string = await sendAndWait(connection, () =>
+        builder.rpc(),
+      );
 
       updateStep("signSuiTx", "done");
       updateStep("sigRequested", "done");
