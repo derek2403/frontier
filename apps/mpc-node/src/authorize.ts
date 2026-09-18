@@ -153,6 +153,34 @@ function connection(): Connection {
   return conn
 }
 
+/** How long to wait for a just-created SigRequest to become readable. */
+const ACCOUNT_WAIT_MS = Number(process.env.MPC_ACCOUNT_WAIT_MS ?? 8000)
+
+/**
+ * Read the SigRequest, allowing for the account not being visible yet.
+ *
+ * A caller learns about a request from a log subscription, which fires as
+ * soon as the transaction is processed. This node then reads the account at
+ * `confirmed` from its OWN RPC, which is a different provider and lags.
+ * Measured on devnet: a caller asked 170ms after the event and every node
+ * answered `SigRequest account not found on-chain`, so the autonomous path
+ * never completed a single request.
+ *
+ * Waiting is safe. It does not relax any check — the account must still
+ * exist, be owned by the SODA program, decode as a SigRequest, and carry a
+ * `foreign_pk_xy` this committee can reproduce. It only stops a node from
+ * calling "not yet visible" the same thing as "does not exist".
+ */
+async function fetchSigRequestAccount(pubkey: PublicKey) {
+  const deadline = Date.now() + ACCOUNT_WAIT_MS
+  for (;;) {
+    const acct = await connection().getAccountInfo(pubkey, 'confirmed')
+    if (acct) return acct
+    if (Date.now() >= deadline) return null
+    await new Promise((r) => setTimeout(r, 500))
+  }
+}
+
 /**
  * Resolve a SigRequest account address into the payload and tweak this node
  * is willing to sign. Throws with a caller-safe reason if anything about the
@@ -172,8 +200,12 @@ export async function authorize(
     throw new Error('sigRequestPubkey is not a valid address')
   }
 
-  const acct = await connection().getAccountInfo(pubkey, 'confirmed')
-  if (!acct) throw new Error('SigRequest account not found on-chain')
+  const acct = await fetchSigRequestAccount(pubkey)
+  if (!acct) {
+    throw new Error(
+      `SigRequest account not found on-chain after ${ACCOUNT_WAIT_MS}ms`,
+    )
+  }
   if (!acct.owner.equals(new PublicKey(SODA_PROGRAM_ID))) {
     throw new Error('account is not owned by the SODA program')
   }
