@@ -728,7 +728,65 @@ checks, and Aave then reported 0.1 USDC held + 0.1 vUSDC debt against
 ~$0.75 of aWETH collateral. `demo.sh`'s SOL gate now only demands 5 SOL when
 a deploy is needed (0.05 otherwise).
 
-## Render MPC deployment — added 2026-09-05
+## Railway deployment — added 2026-09-18 (CURRENT)
+
+Render is deleted. Railway runs all five services in one project,
+`pagecontrol-signing` (`537f955f-168f-4ef8-b202-241666c927e1`), environment
+`production`, region ams, Hobby plan. Nothing sleeps.
+
+| Service | Dockerfile | Address |
+|---|---|---|
+| `soda-mpc-node-p1` | `apps/mpc-node/Dockerfile` | private only, `:8001` |
+| `soda-mpc-node-p2` | `apps/mpc-node/Dockerfile` | private only, `:8002` |
+| `soda-mpc-coordinator` | `apps/mpc-coordinator/Dockerfile` | `https://soda-mpc-coordinator-production.up.railway.app` |
+| `soda-mpc-subscriber` | `apps/mpc-subscriber/Dockerfile` | no port, worker |
+| `soda-relayer` | `apps/relayer/Dockerfile` | no port, worker |
+
+Only the coordinator is public. The nodes answer on
+`SERVICE.railway.internal` over IPv6, which is why `MPC_BIND_HOST`
+defaults to `::` there. Peer URLs use Railway variable references
+(`http://${{soda-mpc-node-p1.RAILWAY_PRIVATE_DOMAIN}}:8001`), so the
+project canvas draws the connection lines.
+
+### Things that cost time here
+
+- **Railway builds from a clean git clone.** No `node_modules`, no `.env`,
+  no `contracts/target/`. Anything a service reads from those must have a
+  committed fallback. That is why `apps/relayer` and `apps/mpc-subscriber`
+  fall back to `apps/web/lib/idl/` for the IDLs, and why the subscriber
+  accepts `ANCHOR_WALLET_JSON` and the node accepts `MPC_SHARE_B64`.
+- **soda-sdk is source-only**, so a Dockerfile must copy
+  `packages/soda-sdk/node_modules` from the deps stage. Missing it crashes
+  with `Cannot find package '@noble/curves' imported from
+  /repo/packages/soda-sdk/src/derive.ts`.
+- **Alchemy's free Solana tier has no `logsSubscribe`.** Both event
+  subscribers failed with `-32601 Method 'logsSubscribe' not found` against
+  the Alchemy devnet URL. They run on `https://api.devnet.solana.com`.
+- **`railway add --repo` returns "You do not have access to this
+  resource"** because the repo is under `derek2403`. Create an empty
+  service, then connect it over the API:
+  `railway api 'mutation($id:String!,$input:ServiceConnectInput!){ serviceConnect(id:$id,input:$input){id} }' --raw-var id=<svc> --var 'input={"repo":"derek2403/frontier","branch":"main"}'`
+- **A connected service does not auto-deploy on push.** Trigger it with
+  `serviceInstanceDeploy(environmentId, serviceId, latestCommit: true)`.
+- `RAILWAY_DOCKERFILE_PATH` is how each service picks its Dockerfile.
+
+### The subscriber cannot complete a signature yet
+
+It runs and subscribes, but two known bugs stop it short of a valid
+`finalize_signature`, both already tracked above:
+
+1. The on-chain committee holds `02062edf…` (the dev key). The Railway
+   committee's `group_pk` is `9e4c1ac3…`. Migrating needs `update_committee`
+   under authority `Aji3Ur…`, which is on the operator's old machine.
+2. `tweakHex` is silently ignored, so even a matching committee would
+   produce a signature that recovers to `group_pk`, not to the derived
+   `group_pk + tweak·G`.
+
+The demo therefore still signs through `/api/finalize` with the dev key
+(`signer.mode: "dev-key"`). The MPC committee is live and provably
+2-of-2, but it is not in the demo's signing path.
+
+## Render MPC deployment — added 2026-09-05 (DELETED — see Railway above)
 
 Second deployment target for the same three services, alongside AWS. Free
 plan, no servers to manage. See `apps/docs/pages/deploy/render-mpc.mdx` for
