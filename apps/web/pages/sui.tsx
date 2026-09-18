@@ -60,7 +60,7 @@ import Timeline, {
   type TimelineStep,
 } from "@/components/Timeline";
 import { SODA_PROGRAM_ID, SUI_DEMO_PROGRAM_ID, suiDemoIdl } from "@/lib/idls";
-import { sendAndWait } from "@/lib/solana-confirm";
+import { sendViaWallet } from "@/lib/solana-confirm";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
 // out of the Next 16 SSR pass (its internals touch `window`).
@@ -775,11 +775,15 @@ function SuiFlow({
 
       // -------- 8. Phantom signs sui_demo::sign_sui_tx --------
       updateStep("signSuiTx", "active");
-      // `processed`, not `confirmed` — see the note in pages/index.tsx. The
-      // finalize route and the MPC nodes each wait for the account to appear
-      // on their own RPC, so nothing downstream needs us to wait here.
-      const signTxSig: string = await sendAndWait(connection, () =>
-        builder.rpc({ commitment: "processed" }),
+      // Sent through the wallet and polled over HTTP — see the note in
+      // lib/solana-confirm.ts. Anchor's .rpc() confirms over a websocket
+      // subscription that some providers reject, which stalls the page on a
+      // transaction the chain has already run.
+      const signTxSig: string = await sendViaWallet(
+        connection,
+        anchorWallet,
+        await builder.transaction(),
+        "sign_sui_tx",
       );
 
       updateStep("signSuiTx", "done");

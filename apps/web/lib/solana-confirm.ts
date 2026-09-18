@@ -1,4 +1,4 @@
-import type { Connection } from "@solana/web3.js";
+import type { Connection, PublicKey, Transaction } from "@solana/web3.js";
 
 /**
  * How much longer to keep polling a signature after Anchor's own confirmation
@@ -60,6 +60,69 @@ export async function sendAndWait(
     `${what} ${signature} did not confirm within ${
       (extraWaitMs + 30_000) / 1000
     }s. It may still land, so check it on Solana Explorer rather than ` +
+      `retrying — a retry builds the same SigRequest PDA and would collide.`,
+  );
+}
+
+/** The part of a wallet-adapter wallet this needs. */
+type SigningWallet = {
+  publicKey: PublicKey;
+  signTransaction: <T extends Transaction>(tx: T) => Promise<T>;
+};
+
+/**
+ * Send a transaction through the connected wallet without using
+ * `confirmTransaction` at all.
+ *
+ * This exists because `confirmTransaction` waits on a `signatureSubscribe`
+ * websocket. Alchemy's Solana endpoint rejects that method with -32601, so
+ * the transaction lands and confirmation still hangs until the 30s timeout.
+ * `apps/demo/src/demo.ts` documents the same trap and works around it with an
+ * explicit `wsEndpoint`; the browser's ConnectionProvider has no such
+ * override, which is why a page run took tens of seconds on a step the chain
+ * had already finished.
+ *
+ * Polling `getSignatureStatuses` over plain HTTP needs no websocket and works
+ * on every provider, so the fix is to not depend on one.
+ *
+ * Returns once the transaction has been processed — it ran in a slot. Nothing
+ * downstream needs more than that: the MPC nodes and the finalize route each
+ * read the resulting account from their own RPC and wait for it to appear.
+ */
+export async function sendViaWallet(
+  connection: Connection,
+  wallet: SigningWallet,
+  tx: Transaction,
+  what = "transaction",
+  timeoutMs = 60_000,
+): Promise<string> {
+  const { blockhash } = await connection.getLatestBlockhash("finalized");
+  tx.feePayer = wallet.publicKey;
+  tx.recentBlockhash = blockhash;
+
+  const signed = await wallet.signTransaction(tx);
+  const signature = await connection.sendRawTransaction(signed.serialize(), {
+    // Preflight catches a bad instruction before it costs a slot, and its
+    // error message is far better than a failed transaction's.
+    skipPreflight: false,
+    maxRetries: 5,
+  });
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+    if (status?.err) {
+      throw new Error(
+        `${what} ${signature} failed on-chain: ${JSON.stringify(status.err)}`,
+      );
+    }
+    if (status?.confirmationStatus) return signature;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  throw new Error(
+    `${what} ${signature} was sent but never appeared on-chain within ` +
+      `${timeoutMs / 1000}s. Check it on Solana Explorer rather than ` +
       `retrying — a retry builds the same SigRequest PDA and would collide.`,
   );
 }

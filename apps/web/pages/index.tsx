@@ -44,7 +44,7 @@ import { secp256k1 as secp256k1Curves } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { QRCodeSVG } from "qrcode.react";
 import { ETH_DEMO_PROGRAM_ID, ethDemoIdl, sodaIdl, SODA_PROGRAM_ID } from "@/lib/idls";
-import { sendAndWait } from "@/lib/solana-confirm";
+import { sendViaWallet } from "@/lib/solana-confirm";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
 // out of the Next 16 SSR pass (its internals touch `window`).
@@ -726,14 +726,16 @@ export default function Home() {
 
       // -------- 6. Phantom signs eth_demo::sign_eth_transfer --------
       updateStep("signEthTransfer", "active");
-      // Wait only for `processed`, not `confirmed`. Devnet confirmation was
-      // measured at 0.9s, 1.5s and 11.1s in three consecutive samples, and
-      // the browser was paying that before it even asked the committee to
-      // sign — 29 of the 31 seconds a run took. Nothing downstream needs
-      // `confirmed` from us: the MPC nodes and the finalize route each read
-      // the account from their own RPC and wait for it to appear.
-      const signTxSig: string = await sendAndWait(connection, () =>
-        signBuilder.rpc({ commitment: "processed" }),
+      // Sent through the wallet and polled over HTTP, NOT through Anchor's
+      // .rpc(). Anchor confirms with `confirmTransaction`, which waits on a
+      // signatureSubscribe websocket that Alchemy's Solana endpoint rejects
+      // with -32601 — so the transaction landed and the page still waited out
+      // the 30s timeout. See lib/solana-confirm.ts.
+      const signTxSig: string = await sendViaWallet(
+        connection,
+        anchorWallet,
+        await signBuilder.transaction(),
+        "sign_eth_transfer",
       );
 
       updateStep("signEthTransfer", "done");
