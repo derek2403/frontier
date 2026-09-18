@@ -72,26 +72,51 @@ const SOLANA_RPC =
 const ANCHOR_WALLET =
   process.env.ANCHOR_WALLET ?? `${homedir()}/.config/solana/id.json`
 
-const sharePath = process.argv[2]
-if (!sharePath) {
-  console.error(
-    'Usage: tsx scripts/update-committee.ts <share-file>\n' +
-      '  e.g.  tsx scripts/update-committee.ts apps/mpc-node/shares/share-p1.json',
-  )
-  process.exit(2)
+/**
+ * The committee's public key, from whichever source the operator has.
+ *
+ * The key is PUBLIC — it goes on-chain and every derived address is built
+ * from it — so the authority does not need a share file to run this. That
+ * matters because the authority and the share holders are usually different
+ * people: shares live on the nodes, and copying one just to read a public
+ * key would move secret material for no reason.
+ *
+ *   MPC_GROUP_PK=<66 hex chars>   compressed key, 02/03 prefixed
+ *   <share-file>                  a share file, which carries the same key
+ */
+function resolveGroupPk(): Uint8Array {
+  const hex = (process.env.MPC_GROUP_PK ?? '').trim().replace(/^0x/, '')
+  if (hex) {
+    if (!/^0[23][0-9a-fA-F]{64}$/.test(hex)) {
+      console.error(
+        'MPC_GROUP_PK must be a 33-byte compressed secp256k1 key: 66 hex ' +
+          `characters starting 02 or 03. Got ${hex.length} characters.`,
+      )
+      process.exit(2)
+    }
+    return Uint8Array.from(Buffer.from(hex, 'hex'))
+  }
+
+  const sharePath = process.argv[2]
+  if (!sharePath) {
+    console.error(
+      'Usage: tsx scripts/update-committee.ts <share-file>\n' +
+        '   or: MPC_GROUP_PK=<66 hex chars> tsx scripts/update-committee.ts\n\n' +
+        'The second form needs no share file — group_pk is public.',
+    )
+    process.exit(2)
+  }
+  const share = JSON.parse(readFileSync(sharePath, 'utf8')) as {
+    groupPkXY: { x: string; y: string }
+  }
+  // Compress (X, Y) -> 33 bytes (0x02 if y even, 0x03 if y odd, then X).
+  const out = new Uint8Array(33)
+  out[0] = (parseInt(share.groupPkXY.y.slice(-2), 16) & 1) === 0 ? 0x02 : 0x03
+  out.set(Buffer.from(share.groupPkXY.x, 'hex'), 1)
+  return out
 }
 
-const share = JSON.parse(readFileSync(sharePath, 'utf8')) as {
-  role: string
-  groupPkXY: { x: string; y: string }
-}
-
-// Compress (X, Y) -> 33 bytes (0x02 if y even, 0x03 if y odd, then X).
-const yLastByte = parseInt(share.groupPkXY.y.slice(-2), 16)
-const compressedPrefix = (yLastByte & 1) === 0 ? 0x02 : 0x03
-const groupPkCompressed = new Uint8Array(33)
-groupPkCompressed[0] = compressedPrefix
-groupPkCompressed.set(Buffer.from(share.groupPkXY.x, 'hex'), 1)
+const groupPkCompressed = resolveGroupPk()
 
 const sodaProgramId = new PublicKey(resolveProgramId())
 
