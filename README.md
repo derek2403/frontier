@@ -2,12 +2,16 @@
 
 **A Solana wallet that owns addresses on other chains.**
 
+> 🥈 **2nd place — Startup Village Demo Day** (co-hosted by Solana & SOCOE), $2,000 · [announcement](https://x.com/SuperteamMY/status/2097683795730469362)
+>
+> ✨ **Honorable Mention — Solana Network State Spring**, Superteam MY × AppWorks × Jelawang Capital side track, 600 USDC + Mac Mini M4 · [announcement](https://x.com/SuperteamMY/status/2054545714932592974)
+
 Connect Phantom, sign one Solana transaction, and an Ethereum address that
 belongs to your Solana wallet deposits into Aave, borrows USDC, or does
 anything else an Ethereum account can do. No bridge, no wrapped tokens, no
 second wallet, no ETH to hold. The user only ever touches SOL.
 
-- Live demo: <https://frontier-web-five.vercel.app> (Solana devnet → Base Sepolia)
+- Live demo: <https://sodalabs.org> (Solana devnet → Base Sepolia)
 - Docs: <https://frontier-docs-cazz.vercel.app>
 - Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`, `sui_demo` `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`, `vault_demo` `2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE`
 
