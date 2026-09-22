@@ -1,6 +1,6 @@
 # SODA — Solana-Owned Derived Authority
 
-**A Solana wallet that owns addresses on other chains.**
+**Control other blockchains from Solana.**
 
 > 🥈 **2nd place — Startup Village Demo Day** (co-hosted by Solana & SOCOE), $2,000 · [announcement](https://x.com/SuperteamMY/status/2097683795730469362)
 >
@@ -12,6 +12,7 @@ anything else an Ethereum account can do. No bridge, no wrapped tokens, no
 second wallet, no ETH to hold. The user only ever touches SOL.
 
 - Live demo: <https://sodalabs.org> (Solana devnet → Base Sepolia)
+- X / Twitter: [@soda_labs_](https://x.com/soda_labs_)
 - Docs: <https://frontier-docs-cazz.vercel.app>
 - Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`, `sui_demo` `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`, `vault_demo` `2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE`
 
