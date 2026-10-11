@@ -11,20 +11,11 @@ import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 // network we tell it about.
 const SOLANA_RPC =
   process.env.NEXT_PUBLIC_SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
-// Optional. web3.js derives the WebSocket from the RPC host, which is wrong
-// for providers that serve them separately (Solami: rpc.solami.dev for HTTP,
-// ws.solami.dev/ws/sol for WebSocket). Must be referenced literally so Next
-// inlines it into the browser bundle.
-const SOLANA_WS = process.env.NEXT_PUBLIC_SOLANA_WS_URL || undefined;
 
 export default function App({ Component, pageProps }: AppProps) {
   const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
-  const config = useMemo(
-    () => ({ commitment: "confirmed" as const, wsEndpoint: SOLANA_WS }),
-    [],
-  );
   return (
-    <ConnectionProvider endpoint={SOLANA_RPC} config={config}>
+    <ConnectionProvider endpoint={SOLANA_RPC}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
           <Component {...pageProps} />

@@ -167,14 +167,7 @@ async function main() {
   const sodaProgramId = new PublicKey(sodaIdl.address)
   const sigRequestedDisc = discFromIdl('SigRequested')
 
-  // SOLANA_WS_URL overrides the WebSocket, because web3.js otherwise derives
-  // it from the HTTP host. Some providers serve them on different hosts —
-  // Solami's RPC is rpc.solami.dev but its WebSocket is ws.solami.dev/ws/sol —
-  // and a wrong guess means SigRequested never arrives.
-  const connection = new Connection(SOLANA_RPC, {
-    commitment: 'confirmed',
-    ...(process.env.SOLANA_WS_URL ? { wsEndpoint: process.env.SOLANA_WS_URL } : {}),
-  })
+  const connection = new Connection(SOLANA_RPC, 'confirmed')
   const payer = loadPayer()
 
   // Read on-chain group_pk so we can sanity-check incoming foreign_pk_xy.

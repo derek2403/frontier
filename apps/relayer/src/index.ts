@@ -190,14 +190,7 @@ async function main() {
     suiTxRequestedDisc = discFromIdl(SUI_DEMO_IDL_PATH, "SuiTxRequested");
   }
 
-  // SOLANA_WS_URL overrides the WebSocket, because web3.js otherwise derives
-  // it from the HTTP host. Some providers serve them on different hosts —
-  // Solami's RPC is rpc.solami.dev but its WebSocket is ws.solami.dev/ws/sol —
-  // and a wrong guess means onLogs never fires and the relayer sees nothing.
-  const connection = new Connection(SOLANA_RPC, {
-    commitment: "confirmed",
-    ...(process.env.SOLANA_WS_URL ? { wsEndpoint: process.env.SOLANA_WS_URL } : {}),
-  });
+  const connection = new Connection(SOLANA_RPC, "confirmed");
   const sepolia = new EthRpc(SEPOLIA_RPC);
   const sui = new SuiGraphQl(SUI_GRAPHQL);
 
