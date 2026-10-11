@@ -10,11 +10,16 @@
       "WebFetch",
       "WebSearch",
       "Agent",
-      "NotebookEdit"
+      "NotebookEdit",
+      "mcp__claude_ai_Claude_Docs__update",
+      "mcp__claude_ai_Claude_Docs__read",
+      "mcp__claude_ai_Claude_Docs__batch",
+      "mcp__claude_ai_Claude_Docs__create",
+      "Bash([ -f \"$f\" ])",
+      "Bash(python3 -u -c ' *)"
     ],
     "defaultMode": "bypassPermissions"
   },
   "alwaysThinkingEnabled": true,
-  "effortLevel": "max",
   "skipDangerousModePermissionPrompt": true
 }

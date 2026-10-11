@@ -7,7 +7,7 @@ belongs to your Solana wallet deposits into Aave, borrows USDC, or does
 anything else an Ethereum account can do. No bridge, no wrapped tokens, no
 second wallet, no ETH to hold. The user only ever touches SOL.
 
-- Live demo: <https://frontier-web-five.vercel.app> (Solana devnet → Base Sepolia)
+- Live demo: <https://sodalabs.org> (Phantom on Solana devnet → Base Sepolia)
 - Docs: <https://frontier-docs-cazz.vercel.app>
 - Programs on devnet: `soda` `CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J`, `eth_demo` `9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx`, `sui_demo` `9LBE5dntoLRV61AM3W3ZHikgZPqZ5MLS4xCVvSxxbXug`, `vault_demo` `2Cx2nBHzK38diq52pdLphnbfVzDUFZJBn3GpdjAQ18kE`
 
@@ -39,8 +39,10 @@ surface and a new way to lose money.
 ## What SODA does
 
 SODA gives every Solana account a deterministic address on every other
-ECDSA chain (Ethereum, Base, Arbitrum, Polygon, BNB, Avalanche, and with a
-different encoder, Bitcoin). It is not an EVM trick: Sui, a non-EVM chain
+secp256k1 chain. One address serves every EVM chain; Ethereum Sepolia and
+Base Sepolia are wired up today, and Arbitrum, Polygon or BNB are a registry
+entry each. Bitcoin needs its own encoder, which is not built yet. It is not
+an EVM trick: Sui, a non-EVM chain
 with its own address rule, transaction format and hash, is reached with the
 same key because it accepts secp256k1 signatures natively. Nobody holds the
 private key for that address. It can only sign when the SODA program on
@@ -67,10 +69,12 @@ contracts. A contract cannot click "Sign", and until now that meant every
 autonomous vault, agent or scheduled strategy on Solana had to hand its
 foreign-chain keys to a SaaS custodian.
 
-`contracts/programs/vault_demo/` is that, working. A vault PDA owns
-`0x18704c316eae06d87982231a319f8d20ba4da5ea` on Base Sepolia, a different
-address from the one the same wallet owns, and it will only ever pay the
-one recipient recorded when it was created. Ask it to pay anyone else and
+`contracts/programs/vault_demo/` is that, working. On 2026-09-11 a vault PDA
+owned `0x18704c316eae06d87982231a319f8d20ba4da5ea` on Base Sepolia, a
+different address from the one the same wallet owns, and it will only ever
+pay the one recipient recorded when it was created. (That run used the
+earlier development key; every derived address moved when the live committee
+took over on 2026-09-18, so the vault's address is different today.) Ask it to pay anyone else and
 Solana refuses before a signature exists. That rule is not a policy in a
 client or a promise from a custodian; it is a `require!` in a program, and
 no key exists that could override it.
@@ -84,23 +88,31 @@ Sepolia for the EVM rows, Sui testnet for the Sui ones.
 | Step | Where | What |
 |---|---|---|
 | Request | Solana, `eth_demo` → `soda` | Phantom signs `sign_eth_transfer`. The program builds the exact EVM transaction, hashes it, derives the foreign address from the signer, and records a `SigRequest`. |
-| Sign | Committee | The committee signs the hash with the key for that address. |
+| Sign | Committee, on Railway | Two MPC nodes run Lindell '17 two-party ECDSA and sign the hash for that address. Neither node holds the key. |
 | Verify | Solana, `soda::finalize_signature` | The program runs `secp256k1_recover` on the signature and refuses unless it recovers to the address it derived. |
-| Broadcast | Base Sepolia | The signed transaction is sent. |
+| Broadcast | Base Sepolia | The relayer assembles the transaction from what Solana recorded and sends it. |
 | Act | Aave V3 | `depositETH` puts ETH into Aave; the Solana wallet's address receives aWETH and earns interest. `Pool.borrow` takes USDC out against that collateral. |
 | Audit | `pnpm verify <hash>` | Anyone can tie the broadcast transaction back to the Solana request in eight checks, using only public state. |
 | Own it from a program | Solana, `vault_demo` → `soda` | `pnpm demo:vault`: a PDA, not a wallet, is the requester, so the address belongs to the program. The vault records one allowed recipient and refuses to sign a payment to anyone else. |
 | Sui | Solana, `sui_demo` → `soda`, then Sui testnet | `DEMO_CHAIN=sui-testnet ./demo.sh`: the program derives the wallet's Sui address, BCS-encodes the exact Sui transaction from it on-chain, commits `sha256(blake2b(intent ‖ tx))`, and the same `finalize_signature` verifies the committee's signature. The signed bytes go to Sui over GraphQL; `pnpm verify:sui <digest>` audits the result. The encoders are held byte-for-byte against `@mysten/sui` in tests. |
 | Act (Sui) | DeepBook V3 | The derived address trades on Sui's on-chain central limit order book: `swap_exact_quote_for_base` buys DEEP with SUI, `swap_exact_base_for_quote` sells it back. The pool is whitelisted, so fees are zero and no DEEP is needed to trade. |
 
-A concrete run: the Solana wallet `D5pwjGzq…` owns
-`0xd55282657a707792c1be66a511f81d7d45ff1ce5` on Base Sepolia. That address
-has deposited ETH into Aave three times and borrowed 0.1 USDC against it
-([borrow tx](https://sepolia.basescan.org/tx/0x732af17f38094e7513cd7680ab79c2802b8733fa58be48e9ec701f24bc4b8db9)).
-Aave's own Pool contract reports the position: about $0.75 of collateral,
-$0.10 of debt, health factor 6.4. No private key for that address exists.
+A concrete run signed by the live committee (2026-09-18): the Solana wallet
+`Dzf8khTd…` owns `0xaf3abce70cda2954a9b369c8fda0d4a05dbf06d7` on Base
+Sepolia. Its Aave V3 `depositETH`
+([tx](https://sepolia.basescan.org/tx/0x31397cfd909b551c40305d754e81bb75ecdc9b4b237ce111cadd761af23403df))
+was requested on Solana, signed by the two MPC nodes, verified by
+`finalize_signature` ("secp256k1_recover OK"), and broadcast by the relayer
+0.4 s after `SigCompleted`. `pnpm verify` passes every check, and the address
+holds aWETH. No private key for that address exists.
 
-A concrete Sui run (2026-09-10): the same wallet `D5pwjGzq…` owns
+Earlier runs used a single development key, before the committee took over
+and every derived address moved. Under that key the wallet `D5pwjGzq…` owned
+`0xd55282657a707792c1be66a511f81d7d45ff1ce5`, deposited into Aave three
+times and borrowed 0.1 USDC against it
+([borrow tx](https://sepolia.basescan.org/tx/0x732af17f38094e7513cd7680ab79c2802b8733fa58be48e9ec701f24bc4b8db9)).
+
+A concrete Sui run, also under the development key (2026-09-10): the same wallet `D5pwjGzq…` owns
 `0x7b117f9d1a245c001a4b8c8979b4bf4857fb97d96c0daf3ba3a24bd71131eaee` on Sui
 testnet, and that address traded on DeepBook in both directions. It bought
 19 DEEP for 0.5 SUI at the book's price
@@ -113,7 +125,8 @@ Solana devnet, both were verified by `finalize_signature` before Sui saw
 them, and `pnpm verify:sui <digest>` passes every check on each.
 
 Three chains are wired up: Ethereum Sepolia and Base Sepolia (one entry each
-in `packages/soda-sdk/src/chains.ts`) and Sui testnet / devnet, the first
+in `packages/soda-sdk/src/chains.ts`, sharing one `evm` derivation tag, so a
+wallet has the same address on both) and Sui testnet / devnet, the first
 non-EVM family (`packages/soda-sdk/src/sui.ts` plus the `sui_demo` caller
 program). The `soda` program did not change for Sui.
 
@@ -168,7 +181,10 @@ accepts a payload or an address from anyone off-chain. The request also
 carries an expiry and a domain, and completed requests are refused.
 
 Today the committee is a 2-of-2 threshold-ECDSA pair (Lindell '17) running
-on two hosts. Neither host ever holds the whole key.
+as two private services on Railway, driven by a coordinator that only
+forwards protocol messages. Neither node ever holds the whole key. The
+per-address tweak is folded into the signed message (`m + r·t`), so the pair
+signs for any derived address with its untweaked shares.
 
 ### 4. Solana verifies the signature before anything is broadcast
 
@@ -213,14 +229,11 @@ What is not yet where it needs to be:
 - **The committee is 2-of-2 under one operator.** Both shares are run by
   us. That is a demo, not decentralisation. Zero fault tolerance: lose one
   host and every derived address is frozen.
-- **The 2-of-2 protocol cannot apply the per-address tweak yet.** Lindell
-  '17 as shipped shares the key multiplicatively, so the derivation has to
-  be applied through the Paillier ciphertext on the second node. The fix is
-  identified and small; until it lands, the live demo signs with a single
-  key held by the server, which does apply the tweak correctly. The on-chain
-  verification is identical in both modes.
-- **Shares are plaintext files.** Production wants TEE or KMS-wrapped
-  shares.
+- **Key generation ran in one process on one machine.** That machine briefly
+  held both shares. The fix is a deployment change, not a protocol change:
+  run each side of the key generation on its own host.
+- **Shares are plaintext.** They are loaded from environment variables.
+  Production wants TEE or KMS-wrapped shares.
 - **Requests are free.** Nothing stops someone spamming `request_signature`.
   The per-request fee above is the fix, and it is also the business model.
 - **The program has an upgrade authority.** As with every bridge that was
@@ -317,7 +330,7 @@ signatures are a superset of messages.
 | **Wormhole, LayerZero, deBridge** | Message bridges | They pass notes between chains. SODA passes authority. The other chain never learns Solana exists. |
 | **cbBTC, wBTC** | Wrapped assets | One corporation holds the real BTC. SODA holds nothing centrally; each address is owned by a Solana account. |
 | **Zeus (zBTC)** | One wrapped-BTC product on a private MPC | Zeus is a product. SODA is the primitive underneath it, open to anyone. Zeus is USDC; SODA is ERC-20. |
-| **Ika** | 2PC-MPC wallets, the user holds one share | A user share on every signature means wallets only. A Solana PDA cannot hold a user share. Ika is wallets that touch every chain; SODA is programs that own every chain. |
+| **Ika** | 2PC-MPC wallets (dWallets) | Its Solana pre-alpha lets a program control a dWallet by CPI, the same shape as SODA, but signs with a single mock signer today. SODA's committee is live and has signed real Aave and DeepBook transactions. |
 | **Turnkey, Privy, Cubist** | Hosted signing SaaS | Centralised and closed. Proves the category; SODA is the on-chain, permissionless version. |
 | **NEAR chain signatures** | The same primitive, on NEAR | See below. |
 
@@ -382,9 +395,9 @@ and dApps that embed the SDK.
 
 ## Roadmap, next three months
 
-1. **Tweak inside the MPC.** Apply the derivation through the Paillier
-   ciphertext so the 2-of-2 committee signs for derived addresses. Retire
-   the single-key path.
+1. **Distributed key generation.** Run each side of the key generation on
+   its own host, so no machine ever holds both shares. (Applying the
+   per-address tweak inside the MPC shipped on 2026-09-18.)
 2. **2-of-3 and beyond.** Move to CGG21-family threshold ECDSA, which
    generalises to *t*-of-*n*. Committee threshold and operator set become
    on-chain parameters of the `Committee` account, with `update_committee`
@@ -400,7 +413,9 @@ and dApps that embed the SDK.
 5. **Mainnet-beta pilot** with one institutional partner running a treasury
    address on Base.
 6. **Intents.** A Solana program that holds a derived address and releases
-   a foreign transaction only when an on-chain condition is met.
+   a foreign transaction only when an on-chain condition is met: users sell
+   SOL on Solana and receive native ETH on Base, with solvers competing and
+   one Solana transaction settling the trade.
 
 ## Run it yourself
 
@@ -411,6 +426,11 @@ wallet at `~/.config/solana/id.json` with a little devnet SOL.
 pnpm install
 cp .env.example .env            # set DEMO_CHAIN, RPC URLs, SEPOLIA_FUNDER_KEY (and SUI_FUNDER_KEY for Sui)
 ```
+
+The live committee signs every request. To have the CLI ask it directly, also
+set `MPC_COORDINATOR_URL=https://soda-mpc-coordinator-production.up.railway.app`
+and `MPC_COORDINATOR_TOKEN`. Without them, the Railway subscriber still picks
+up the request and signs it.
 
 **CLI, the canonical demo.** One command does everything and ends with a
 cryptographic audit of the transaction it just broadcast:
@@ -433,8 +453,9 @@ its SUI in an address balance rather than in coin objects, which is what a
 wallet or faucet usually gives you: such an address owns no coin object,
 so GraphQL alone cannot spend from it.
 
-**Web.** The same pipeline with Phantom signing the Solana side; `/sui` is
-the Sui version of the page:
+**Web.** The same pipeline with Phantom signing the Solana side, live at
+<https://sodalabs.org>. `/sui` is the Sui version of the page. To run it
+locally:
 
 ```bash
 cp apps/web/.env.example apps/web/.env
@@ -468,7 +489,7 @@ contracts/programs/sui_demo/   Sui caller: derives the sender, BCS-encodes, blak
 packages/soda-sdk/             TypeScript: derivation, RLP, chain registry, Aave calldata,
                                sui.ts (address, BCS, hashes, signature envelope, GraphQL client)
 apps/demo/                     CLI demos (demo.ts, demo-sui.ts) and the audit tools (verify.ts, verify-sui.ts)
-apps/web/                      Next.js demo: Phantom → /api/finalize → broadcast
+apps/web/                      Next.js app at sodalabs.org: Phantom → Solana request → committee → broadcast
 apps/mpc-node/                 threshold-ECDSA node (Lindell '17), on-chain authorisation
 apps/mpc-coordinator/          drives the signing protocol between the two nodes
 apps/mpc-subscriber/           watches SigRequested, asks the committee, finalizes
@@ -479,6 +500,8 @@ apps/docs/                     the documentation site
 ## Status
 
 Hackathon build. Live on Solana devnet, reaching Ethereum Sepolia, Base
-Sepolia and Sui testnet, with all three caller programs deployed. Not
-audited. Do not put real money behind a derived address until the
+Sepolia and Sui testnet, with all three caller programs deployed. The MPC
+committee has been the live signer since 2026-09-18. All six services (two
+MPC nodes, coordinator, subscriber, relayer and the web app) run on Railway;
+only the web app and the coordinator are public. Not audited. Do not put real money behind a derived address until the
 committee is *t*-of-*n* under independent operators.
