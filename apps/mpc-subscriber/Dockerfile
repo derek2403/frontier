@@ -28,6 +28,12 @@ COPY packages/soda-sdk/package.json packages/soda-sdk/
 RUN pnpm install --filter mpc-subscriber... --frozen-lockfile
 
 FROM node:22-bookworm-slim
+# The slim image ships no system root certificates. Node bundles its own, but
+# the native Yellowstone gRPC client reads the OS store and, finding it empty,
+# refuses every TLS connection ("invalid TLS configuration for gRPC endpoint").
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 WORKDIR /repo
 
