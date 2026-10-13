@@ -13,8 +13,9 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@noble/curves": "^1.6.0",
+    "@soda-sdk/core": "workspace:*",
     "@solana/web3.js": "^1.95.0",
-    "@soda-sdk/core": "workspace:*"
+    "@triton-one/yellowstone-grpc": "^9.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

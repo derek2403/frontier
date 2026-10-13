@@ -50,8 +50,13 @@ const sepolia = new EthRpc(chainRpcUrl(CHAIN));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, "../../..");
-const SODA_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/soda.json");
-const ETH_DEMO_IDL_PATH = resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json");
+// The IDL carries the program address, so pointing these at
+// contracts/target/mainnet/*.json is how the CLI targets the mainnet
+// deployment. Unset = the local devnet build.
+const SODA_IDL_PATH =
+  process.env.SODA_IDL_PATH ?? resolve(REPO_ROOT, "contracts/target/idl/soda.json");
+const ETH_DEMO_IDL_PATH =
+  process.env.ETH_DEMO_IDL_PATH ?? resolve(REPO_ROOT, "contracts/target/idl/eth_demo.json");
 const SIGNER_KEY_PATH = resolve(REPO_ROOT, "keyshare.dev.json");
 
 const CHAIN_ID = CHAIN.chainId;
@@ -428,9 +433,15 @@ async function main() {
   const foreignPkXy = foreignPk.subarray(1);
 
   // Detect public Solana cluster from RPC URL so we can print Solscan links.
+  // SOLANA_CLUSTER wins when set: a provider URL such as Solami's names no
+  // cluster, so guessing from the URL would print no links at all.
   const rpc = (process.env.SOLANA_RPC_URL ?? "").toLowerCase();
+  const forced = (process.env.SOLANA_CLUSTER ?? "").toLowerCase();
   const solanaCluster: "mainnet" | "devnet" | "local" =
-    rpc.includes("devnet") ? "devnet"
+    forced === "mainnet" || forced === "mainnet-beta" ? "mainnet"
+    : forced === "devnet" ? "devnet"
+    : forced === "local" ? "local"
+    : rpc.includes("devnet") ? "devnet"
     : rpc.includes("mainnet") ? "mainnet"
     : "local";
   const solscanTx = (sig: string) =>
@@ -519,7 +530,7 @@ async function main() {
   // the program refuses a second one with AlreadyCompleted (0x1770).
   let finalSig: string | null = null;
   try {
-    finalSig = await (sodaProgram.methods as any)
+    const sent: string = await (sodaProgram.methods as any)
       .finalizeSignature(Array.from(sigBytes), recoveryId)
       .accounts({
         committee: committeePda,
@@ -527,8 +538,9 @@ async function main() {
         submitter: walletKp.publicKey,
       })
       .rpc();
-    console.log(`      ✓ ${finalSig}`);
-    console.log(`      ↗ ${solscanTx(finalSig)}`);
+    finalSig = sent;
+    console.log(`      ✓ ${sent}`);
+    console.log(`      ↗ ${solscanTx(sent)}`);
   } catch (e) {
     const msg = (e as Error).message ?? "";
     if (!/AlreadyCompleted|0x1770|already completed/i.test(msg)) throw e;

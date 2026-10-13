@@ -9,6 +9,11 @@ pub mod state;
 
 use instructions::*;
 
+// One source, two deployments. `--features mainnet` builds the mainnet
+// program; the default build stays the live devnet one.
+#[cfg(feature = "mainnet")]
+declare_id!("afbLp3atZ9J6w1PjCsgGx7ALrgBVuMvcJPmwczTrQw3");
+#[cfg(not(feature = "mainnet"))]
 declare_id!("CPAEfBXpMMsUrjLNhDYxaCH79DYvFHJFC27fttnxAL1J");
 
 #[program]

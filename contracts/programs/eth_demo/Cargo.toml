@@ -16,6 +16,9 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "soda/idl-build"]
+# Build for Solana mainnet. Also switches soda::ID, which eth_demo checks
+# before every CPI, so the two must always be built with the same flag.
+mainnet = ["soda/mainnet"]
 
 [dependencies]
 anchor-lang = { workspace = true }

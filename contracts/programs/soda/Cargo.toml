@@ -16,6 +16,8 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
+# Build for Solana mainnet: switches declare_id! to the mainnet address.
+mainnet = []
 
 [dependencies]
 anchor-lang = { workspace = true }

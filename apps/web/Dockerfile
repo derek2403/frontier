@@ -10,6 +10,7 @@
 #   NEXT_PUBLIC_DEMO_CHAIN / DEMO_CHAIN        which chain the demo targets
 #   NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL + bare    EVM RPC
 #   NEXT_PUBLIC_SOLANA_RPC_URL + bare          Solana RPC
+#   NEXT_PUBLIC_SOLANA_CLUSTER + *_PROGRAM_ID  mainnet only (build-time ARGs)
 #   ANCHOR_WALLET_JSON                         server wallet, as a JSON array
 #   MPC_COORDINATOR_URL + MPC_COORDINATOR_TOKEN   sign via the committee
 #   SEPOLIA_FUNDER_KEY                         optional sponsor for /api/fund
@@ -40,7 +41,13 @@ COPY apps/web ./apps/web
 ARG NEXT_PUBLIC_DEMO_CHAIN
 ARG NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL
 ARG NEXT_PUBLIC_SOLANA_RPC_URL
+ARG NEXT_PUBLIC_SOLANA_WS_URL
 ARG NEXT_PUBLIC_SUI_CHAIN
+# Mainnet only. Unset = the devnet ids in lib/idl/*.json and devnet links.
+ARG NEXT_PUBLIC_SOLANA_CLUSTER
+ARG NEXT_PUBLIC_SODA_PROGRAM_ID
+ARG NEXT_PUBLIC_ETH_DEMO_PROGRAM_ID
+ARG NEXT_PUBLIC_SUI_DEMO_PROGRAM_ID
 
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /repo/apps/web

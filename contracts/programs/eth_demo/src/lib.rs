@@ -4,6 +4,10 @@ use solana_program::keccak;
 pub mod eth_rlp;
 pub mod state;
 
+// See soda/src/lib.rs: `--features mainnet` builds the mainnet program.
+#[cfg(feature = "mainnet")]
+declare_id!("DZaBAkQac4DTwoXcoCuMDa76onxAdN6im3s5jcrV5GSw");
+#[cfg(not(feature = "mainnet"))]
 declare_id!("9JMr3TNHk2Mh7TQsaoxkfDmLFE3naYcAwcsgkKv3BBXx");
 
 // The chain is no longer a compile-time constant. `chain_id` and `chain_tag`

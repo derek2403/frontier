@@ -44,6 +44,7 @@ import { secp256k1 as secp256k1Curves } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { QRCodeSVG } from "qrcode.react";
 import { ETH_DEMO_PROGRAM_ID, ethDemoIdl, sodaIdl, SODA_PROGRAM_ID } from "@/lib/idls";
+import { SOLANA_CLUSTER_LABEL, solanaTxUrl } from "@/lib/solana-cluster";
 import { sendViaWallet } from "@/lib/solana-confirm";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
@@ -868,7 +869,7 @@ export default function Home() {
                 </div>
                 <div className="rounded-lg bg-white p-3">
                   <QRCodeSVG
-                    value={`https://xray.helius.xyz/tx/${r.finalizeSignatureTx}?network=devnet`}
+                    value={solanaTxUrl(r.finalizeSignatureTx)}
                     size={160}
                     bgColor="#ffffff"
                     fgColor="#000000"
@@ -877,7 +878,7 @@ export default function Home() {
                   />
                 </div>
                 <a
-                  href={`https://xray.helius.xyz/tx/${r.finalizeSignatureTx}?network=devnet`}
+                  href={solanaTxUrl(r.finalizeSignatureTx)}
                   target="_blank"
                   rel="noreferrer"
                   className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
@@ -1213,7 +1214,7 @@ const data  = ${
               ) : (
                 <>
                   <p className="text-sm text-zinc-400">
-                    Phantom on devnet. This wallet is the <em>owner</em> — the
+                    Phantom on {SOLANA_CLUSTER_LABEL}. This wallet is the <em>owner</em> — the
                     Ethereum address in the next step is derived from its public
                     key, and only it can request a signature for that address.
                   </p>

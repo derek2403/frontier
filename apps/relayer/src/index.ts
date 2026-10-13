@@ -28,11 +28,21 @@
 // log lines ourselves. Discriminators come from the IDL; layouts are in
 // events.ts.
 //
+// Event feed: WebSocket `onLogs` by default. With SOLAMI_GRPC_URL and
+// SOLAMI_GRPC_TOKEN both set, a Yellowstone gRPC stream replaces it (see
+// grpc-feed.ts). Both feed the same processLogs, so decoding, caching, dedupe
+// and broadcast do not depend on which feed is in use.
+//
 // Usage:
 //   pnpm --filter relayer dev
-//   RELAYER_DEBUG=1 pnpm --filter relayer dev      — log every WS log batch
+//   RELAYER_DEBUG=1 pnpm --filter relayer dev      — log every log batch received
 //   SUI_CHAIN=sui-devnet pnpm --filter relayer dev — submit Sui txs to devnet
 //                                                    (default: sui-testnet)
+//   SOLAMI_GRPC_URL=https://grpc.solami.dev:443 SOLAMI_GRPC_TOKEN=<key> \
+//     pnpm --filter relayer dev                    — events over Yellowstone gRPC
+//   SODA_PROGRAM_ID=<pubkey> ETH_DEMO_PROGRAM_ID=<pubkey> SUI_DEMO_PROGRAM_ID=<pubkey> \
+//     pnpm --filter relayer dev                    — watch these addresses instead
+//                                                    of the IDLs' (e.g. mainnet)
 
 import { Connection, PublicKey } from "@solana/web3.js";
 import { secp256k1 } from "@noble/curves/secp256k1";
@@ -64,6 +74,7 @@ import {
   type SigCompleted,
   type SuiTxRequested,
 } from "./events";
+import { startGrpcFeed, type LogsEvent } from "./grpc-feed";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -115,6 +126,11 @@ const SUI_CHAIN = getSuiChain(
 );
 const SUI_GRAPHQL = suiGraphqlUrl(SUI_CHAIN);
 
+// gRPC is opt-in and needs both values. One without the other falls back to
+// the WebSocket feed with a warning, rather than failing on every reconnect.
+const GRPC_URL = process.env.SOLAMI_GRPC_URL?.trim() || undefined;
+const GRPC_TOKEN = process.env.SOLAMI_GRPC_TOKEN?.trim() || undefined;
+
 const C = {
   reset: "\x1b[0m",
   dim:   "\x1b[2m",
@@ -141,6 +157,21 @@ function discFromIdl(idlPath: string, eventName: string): Uint8Array {
   const ev = (idl.events ?? []).find((e: { name: string }) => e.name === eventName);
   if (!ev) throw new Error(`event ${eventName} not in ${idlPath}`);
   return Uint8Array.from(ev.discriminator);
+}
+
+/**
+ * The program address to watch: `envName` when set, else the IDL's.
+ * Mainnet runs the same program code at different addresses, so the IDL's
+ * event discriminators still apply and only the address is replaced.
+ */
+function programId(envName: string, idl: { address: string }): { id: PublicKey; source: string } {
+  const override = process.env[envName]?.trim();
+  if (!override) return { id: new PublicKey(idl.address), source: "IDL" };
+  try {
+    return { id: new PublicKey(override), source: envName };
+  } catch {
+    throw new Error(`${envName}=${override} is not a valid Solana address`);
+  }
 }
 
 function bytesEq(a: Uint8Array, b: Uint8Array): boolean {
@@ -173,24 +204,39 @@ type CachedTx = {
 async function main() {
   const sodaIdl = JSON.parse(readFileSync(SODA_IDL_PATH, "utf8"));
   const ethDemoIdl = JSON.parse(readFileSync(ETH_DEMO_IDL_PATH, "utf8"));
-  const sodaProgramId = new PublicKey(sodaIdl.address);
-  const ethDemoProgramId = new PublicKey(ethDemoIdl.address);
+  const soda = programId("SODA_PROGRAM_ID", sodaIdl);
+  const ethDemo = programId("ETH_DEMO_PROGRAM_ID", ethDemoIdl);
+  const sodaProgramId = soda.id;
+  const ethDemoProgramId = ethDemo.id;
 
   const ethTxRequestedDisc = discFromIdl(ETH_DEMO_IDL_PATH, "EthTxRequested");
   const sigCompletedDisc = discFromIdl(SODA_IDL_PATH, "SigCompleted");
 
   // The Sui path is optional: a checkout whose `anchor build` predates
   // sui_demo still relays ETH. Both values stay null in that case and the
-  // Sui branches below never fire.
+  // Sui branches below never fire. SUI_DEMO_PROGRAM_ID cannot enable it on
+  // its own, because the event discriminator still comes from the IDL.
   let suiDemoProgramId: PublicKey | null = null;
+  let suiDemoSource = "";
   let suiTxRequestedDisc: Uint8Array | null = null;
   if (existsSync(SUI_DEMO_IDL_PATH)) {
     const suiDemoIdl = JSON.parse(readFileSync(SUI_DEMO_IDL_PATH, "utf8"));
-    suiDemoProgramId = new PublicKey(suiDemoIdl.address);
+    const suiDemo = programId("SUI_DEMO_PROGRAM_ID", suiDemoIdl);
+    suiDemoProgramId = suiDemo.id;
+    suiDemoSource = suiDemo.source;
     suiTxRequestedDisc = discFromIdl(SUI_DEMO_IDL_PATH, "SuiTxRequested");
   }
 
-  const connection = new Connection(SOLANA_RPC, "confirmed");
+  const useGrpc = Boolean(GRPC_URL && GRPC_TOKEN);
+
+  // SOLANA_WS_URL overrides the WebSocket, because web3.js otherwise derives
+  // it from the HTTP host. Some providers serve them on different hosts —
+  // Solami's RPC is rpc.solami.dev but its WebSocket is ws.solami.dev/ws/sol —
+  // and a wrong guess means onLogs never fires and the relayer sees nothing.
+  const connection = new Connection(SOLANA_RPC, {
+    commitment: "confirmed",
+    ...(process.env.SOLANA_WS_URL ? { wsEndpoint: process.env.SOLANA_WS_URL } : {}),
+  });
   const sepolia = new EthRpc(SEPOLIA_RPC);
   const sui = new SuiGraphQl(SUI_GRAPHQL);
 
@@ -212,12 +258,32 @@ async function main() {
       `  (${rpcChain ? rpcChain.name : rpcChainId !== null ? `chain ${rpcChainId}` : "chain unknown"})`,
   );
   console.log(`${C.cyan}┃${C.reset}  Sui GraphQL:  ${SUI_GRAPHQL.split("?")[0]}  (${SUI_CHAIN.name})`);
-  console.log(`${C.cyan}┃${C.reset}  SODA program: ${sodaProgramId.toBase58()}`);
-  console.log(`${C.cyan}┃${C.reset}  eth_demo:     ${ethDemoProgramId.toBase58()}`);
-  console.log(`${C.cyan}┃${C.reset}  sui_demo:     ${suiDemoProgramId ? suiDemoProgramId.toBase58() : "(disabled — IDL not found)"}`);
+  console.log(`${C.cyan}┃${C.reset}  SODA program: ${sodaProgramId.toBase58()}  (${soda.source})`);
+  console.log(`${C.cyan}┃${C.reset}  eth_demo:     ${ethDemoProgramId.toBase58()}  (${ethDemo.source})`);
+  console.log(
+    `${C.cyan}┃${C.reset}  sui_demo:     ` +
+      (suiDemoProgramId ? `${suiDemoProgramId.toBase58()}  (${suiDemoSource})` : "(disabled — IDL not found)"),
+  );
+  // Query strings are dropped from every URL printed here: providers put the
+  // API key there. The gRPC token travels in a header and is never printed.
+  console.log(
+    `${C.cyan}┃${C.reset}  Event feed:   ` +
+      (useGrpc
+        ? `gRPC ${GRPC_URL!.split("?")[0]}  (Yellowstone, confirmed)`
+        : `WebSocket ${process.env.SOLANA_WS_URL ? process.env.SOLANA_WS_URL.split("?")[0] : "(derived from Solana RPC)"}  (onLogs, confirmed)`),
+  );
   console.log(`${C.cyan}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${C.reset}`);
   if (!suiDemoProgramId) {
     log(`${C.yellow}sui_demo IDL missing at ${SUI_DEMO_IDL_PATH} — Sui path disabled; run \`anchor build\` in contracts/ to enable${C.reset}`);
+    if (process.env.SUI_DEMO_PROGRAM_ID?.trim()) {
+      log(`${C.yellow}SUI_DEMO_PROGRAM_ID is ignored: the SuiTxRequested discriminator comes from that IDL${C.reset}`);
+    }
+  }
+  if (Boolean(GRPC_URL) !== Boolean(GRPC_TOKEN)) {
+    log(
+      `${C.yellow}${GRPC_URL ? "SOLAMI_GRPC_URL" : "SOLAMI_GRPC_TOKEN"} is set but ` +
+        `${GRPC_URL ? "SOLAMI_GRPC_TOKEN" : "SOLAMI_GRPC_URL"} is not — using the WebSocket feed${C.reset}`,
+    );
   }
 
   const cache = new Map<string, CachedTx>();
@@ -227,12 +293,14 @@ async function main() {
   // program ID) don't double-process a CPI that mentions more than one.
   const seenTxs = new Set<string>();
 
-  async function processLogs(programLabel: string, logs: { signature: string; logs: string[]; err: unknown }) {
+  // `source` names the feed and the program filter(s) that matched, for the
+  // debug line only: "onLogs soda" or "grpc soda+eth_demo".
+  async function processLogs(source: string, logs: LogsEvent) {
     if (logs.err) return;
     if (seenTxs.has(logs.signature)) return;
     seenTxs.add(logs.signature);
     if (debug) {
-      log(`${C.dim}[onLogs ${programLabel}]${C.reset} sig=${logs.signature.slice(0, 12)}… ${logs.logs.length} lines`);
+      log(`${C.dim}[${source}]${C.reset} sig=${logs.signature.slice(0, 12)}… ${logs.logs.length} lines`);
     }
     for (const line of logs.logs) {
       if (!line.startsWith("Program data: ")) continue;
@@ -397,16 +465,37 @@ async function main() {
     }
   }
 
-  connection.onLogs(sodaProgramId, (logs) => {
-    processLogs("soda", logs).catch((e) => log(`  ${C.red}soda onLogs handler crashed:${C.reset} ${(e as Error).message}`));
-  });
-  connection.onLogs(ethDemoProgramId, (logs) => {
-    processLogs("eth_demo", logs).catch((e) => log(`  ${C.red}eth_demo onLogs handler crashed:${C.reset} ${(e as Error).message}`));
-  });
-  if (suiDemoProgramId) {
-    connection.onLogs(suiDemoProgramId, (logs) => {
-      processLogs("sui_demo", logs).catch((e) => log(`  ${C.red}sui_demo onLogs handler crashed:${C.reset} ${(e as Error).message}`));
+  if (useGrpc) {
+    // One filter per program, named like the onLogs labels. A CPI that
+    // touches two of them arrives once, with both names in `filters`.
+    const programs = [
+      { label: "soda", id: sodaProgramId.toBase58() },
+      { label: "eth_demo", id: ethDemoProgramId.toBase58() },
+      ...(suiDemoProgramId ? [{ label: "sui_demo", id: suiDemoProgramId.toBase58() }] : []),
+    ];
+    await startGrpcFeed({
+      url: GRPC_URL!,
+      token: GRPC_TOKEN!,
+      programs,
+      log: (line, level) => log(`${level === "warn" ? C.yellow : C.dim}${line}${C.reset}`),
+      onLogs: (label, logs) => {
+        processLogs(`grpc ${label}`, logs).catch((e) =>
+          log(`  ${C.red}gRPC ${label} handler crashed:${C.reset} ${(e as Error).message}`),
+        );
+      },
     });
+  } else {
+    connection.onLogs(sodaProgramId, (logs) => {
+      processLogs("onLogs soda", logs).catch((e) => log(`  ${C.red}soda onLogs handler crashed:${C.reset} ${(e as Error).message}`));
+    });
+    connection.onLogs(ethDemoProgramId, (logs) => {
+      processLogs("onLogs eth_demo", logs).catch((e) => log(`  ${C.red}eth_demo onLogs handler crashed:${C.reset} ${(e as Error).message}`));
+    });
+    if (suiDemoProgramId) {
+      connection.onLogs(suiDemoProgramId, (logs) => {
+        processLogs("onLogs sui_demo", logs).catch((e) => log(`  ${C.red}sui_demo onLogs handler crashed:${C.reset} ${(e as Error).message}`));
+      });
+    }
   }
 
   log(`watching for events… (Ctrl-C to stop)`);

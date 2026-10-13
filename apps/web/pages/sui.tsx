@@ -60,6 +60,7 @@ import Timeline, {
   type TimelineStep,
 } from "@/components/Timeline";
 import { SODA_PROGRAM_ID, SUI_DEMO_PROGRAM_ID, suiDemoIdl } from "@/lib/idls";
+import { SOLANA_CLUSTER_LABEL, solanaTxUrl } from "@/lib/solana-cluster";
 import { sendViaWallet } from "@/lib/solana-confirm";
 
 // WalletMultiButton is a client-only component; dynamic-import keeps it
@@ -854,9 +855,6 @@ function SuiFlow({
   const step3Done = !!result;
   const activeStep = !step1Done ? 1 : !step2Done ? 2 : 3;
 
-  const xray = (sig: string) =>
-    `https://xray.helius.xyz/tx/${sig}?network=devnet`;
-
   return (
     <>
       {/* Every step renders always. A locked step stays visible and dimmed so
@@ -879,7 +877,7 @@ function SuiFlow({
           ) : (
             <>
               <p className="text-sm text-zinc-400">
-                Phantom on devnet. This wallet is the <em>owner</em> — the Sui
+                Phantom on {SOLANA_CLUSTER_LABEL}. This wallet is the <em>owner</em> — the Sui
                 address in the next step is derived from its public key, and
                 only it can request a signature for that address.
               </p>
@@ -1136,7 +1134,7 @@ function SuiFlow({
               </div>
               <div className="rounded-lg bg-white p-3">
                 <QRCodeSVG
-                  value={xray(result.finalizeSignatureTx)}
+                  value={solanaTxUrl(result.finalizeSignatureTx)}
                   size={160}
                   bgColor="#ffffff"
                   fgColor="#000000"
@@ -1145,7 +1143,7 @@ function SuiFlow({
                 />
               </div>
               <a
-                href={xray(result.finalizeSignatureTx)}
+                href={solanaTxUrl(result.finalizeSignatureTx)}
                 target="_blank"
                 rel="noreferrer"
                 className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
