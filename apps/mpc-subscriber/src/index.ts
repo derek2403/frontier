@@ -21,6 +21,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+// Type-only: beam.ts and grpc-feed.ts load native modules, so they are
+// imported dynamically and only when their env vars are set.
+import type { Beam } from './beam.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -64,6 +67,20 @@ const COORDINATOR_URL = (
 const COORDINATOR_TOKEN = process.env.MPC_COORDINATOR_TOKEN ?? ''
 const ANCHOR_WALLET =
   process.env.ANCHOR_WALLET ?? `${homedir()}/.config/solana/id.json`
+
+// ---- Opt-in Solami features. All unset = the original devnet behaviour. ----
+//
+// SODA_PROGRAM_ID           use this soda deployment instead of the IDL's
+//                           address (mainnet has its own id; the code and IDL
+//                           are otherwise identical).
+// SOLAMI_GRPC_URL + _TOKEN  read SigRequested from a Yellowstone gRPC stream
+//                           instead of WebSocket logsSubscribe.
+// SOLAMI_SWQOS_KEY          land finalize_signature through Solami Beam.
+//                           Optional: SOLAMI_BEAM_TIP_SOL (default 0.0001).
+const SODA_PROGRAM_ID_OVERRIDE = process.env.SODA_PROGRAM_ID?.trim() || ''
+const GRPC_URL = process.env.SOLAMI_GRPC_URL?.trim() || ''
+const GRPC_TOKEN = process.env.SOLAMI_GRPC_TOKEN?.trim() || ''
+const SWQOS_KEY = process.env.SOLAMI_SWQOS_KEY?.trim() || ''
 
 /**
  * Load the fee payer. `ANCHOR_WALLET_JSON` carries the keypair array itself,
@@ -164,10 +181,20 @@ const log = (line: string) => console.log(`${C.dim}[${ts()}]${C.reset} ${line}`)
 
 async function main() {
   const sodaIdl = JSON.parse(readFileSync(SODA_IDL_PATH, 'utf8'))
-  const sodaProgramId = new PublicKey(sodaIdl.address)
+  // The override feeds everything below: the log filter, the committee PDA and
+  // the finalize instruction. Discriminators still come from the IDL, which is
+  // valid because the program code is the same on every cluster.
+  const sodaProgramId = new PublicKey(SODA_PROGRAM_ID_OVERRIDE || sodaIdl.address)
   const sigRequestedDisc = discFromIdl('SigRequested')
 
-  const connection = new Connection(SOLANA_RPC, 'confirmed')
+  // SOLANA_WS_URL overrides the WebSocket, because web3.js otherwise derives
+  // it from the HTTP host. Some providers serve them on different hosts —
+  // Solami's RPC is rpc.solami.dev but its WebSocket is ws.solami.dev/ws/sol —
+  // and a wrong guess means SigRequested never arrives.
+  const connection = new Connection(SOLANA_RPC, {
+    commitment: 'confirmed',
+    ...(process.env.SOLANA_WS_URL ? { wsEndpoint: process.env.SOLANA_WS_URL } : {}),
+  })
   const payer = loadPayer()
 
   // Read on-chain group_pk so we can sanity-check incoming foreign_pk_xy.
@@ -180,21 +207,64 @@ async function main() {
   // Layout: 8-byte discriminator, u8 bump, 32-byte authority, 33-byte group_pk, u8 signer_count
   const groupPkCompressed = committeeAcct.data.subarray(8 + 1 + 32, 8 + 1 + 32 + 33)
 
+  // Beam is a landing optimisation, so any setup failure (bad config, the
+  // native QUIC module missing on this platform) leaves the subscriber on
+  // sendRawTransaction instead of stopping it from signing at all.
+  let beam: Beam | null = null
+  if (SWQOS_KEY) {
+    try {
+      const { createBeam } = await import('./beam.js')
+      beam = createBeam({
+        swqosKey: SWQOS_KEY,
+        rpcToken: process.env.SOLAMI_API_KEY?.trim() || GRPC_TOKEN || undefined,
+        tipSol: process.env.SOLAMI_BEAM_TIP_SOL,
+        log,
+      })
+    } catch (e) {
+      log(`${C.red}Beam disabled:${C.reset} ${(e as Error).message}; using sendRawTransaction`)
+    }
+  }
+
+  const useGrpc = Boolean(GRPC_URL && GRPC_TOKEN)
+  if (!useGrpc && (GRPC_URL || GRPC_TOKEN)) {
+    log(`${C.yellow}SOLAMI_GRPC_URL and SOLAMI_GRPC_TOKEN must both be set; using WebSocket onLogs${C.reset}`)
+  }
+  const grpcHost = (() => {
+    try {
+      return new URL(GRPC_URL).host
+    } catch {
+      return GRPC_URL.split('?')[0]
+    }
+  })()
+
   console.log(`${C.cyan}┏━ SODA MPC subscriber ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${C.reset}`)
   console.log(`${C.cyan}┃${C.reset}  Solana RPC:   ${SOLANA_RPC.split('?')[0]}`)
   console.log(`${C.cyan}┃${C.reset}  Coordinator:  ${COORDINATOR_URL}`)
   console.log(`${C.cyan}┃${C.reset}  Payer:        ${payer.publicKey.toBase58()}`)
+  console.log(`${C.cyan}┃${C.reset}  Program:      ${sodaProgramId.toBase58()}${SODA_PROGRAM_ID_OVERRIDE ? ' (SODA_PROGRAM_ID)' : ''}`)
   console.log(`${C.cyan}┃${C.reset}  Committee:    ${committeePda.toBase58()}`)
   console.log(`${C.cyan}┃${C.reset}  group_pk(33): ${Buffer.from(groupPkCompressed).toString('hex')}`)
+  console.log(`${C.cyan}┃${C.reset}  Events via:   ${useGrpc ? `Yellowstone gRPC (${grpcHost})` : 'WebSocket logsSubscribe'}`)
+  console.log(`${C.cyan}┃${C.reset}  Finalize via: ${beam ? `Solami Beam, tip ${beam.tipSol} SOL, swqos id ${beam.identity}` : 'sendRawTransaction'}`)
   console.log(`${C.cyan}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${C.reset}`)
+
+  // Connect once now rather than on the first request, so a bad key shows up
+  // at startup. A failure here is retried on the first finalize.
+  if (beam) {
+    beam.connect().then(
+      () => log('Beam QUIC connection open'),
+      (e) => log(`${C.yellow}Beam connect failed:${C.reset} ${(e as Error).message}; will retry on the first finalize`),
+    )
+  }
 
   const seenTxs = new Set<string>()
 
-  connection.onLogs(sodaProgramId, async (logs) => {
-    if (logs.err) return
-    if (seenTxs.has(logs.signature)) return
-    seenTxs.add(logs.signature)
-    for (const line of logs.logs) {
+  // Both feeds end here, so they share one decoder and one dedupe set. That
+  // set also absorbs the overlap when the gRPC feed replays after a reconnect.
+  const processLogs = async (signature: string, logLines: string[]) => {
+    if (seenTxs.has(signature)) return
+    seenTxs.add(signature)
+    for (const line of logLines) {
       if (!line.startsWith('Program data: ')) continue
       const raw = Uint8Array.from(Buffer.from(line.slice('Program data: '.length), 'base64'))
       if (raw.length < 8) continue
@@ -203,13 +273,46 @@ async function main() {
       if (!bytesEq(disc, sigRequestedDisc)) continue
       try {
         const ev = decodeSigRequested(body)
-        await handleSigRequested(connection, payer, sodaProgramId, committeePda, ev)
+        await handleSigRequested(connection, payer, sodaProgramId, committeePda, beam, ev)
       } catch (e) {
         log(`${C.red}handler crashed:${C.reset} ${(e as Error).message}`)
       }
     }
-  })
+  }
+
+  if (useGrpc) {
+    const { startGrpcFeed } = await import('./grpc-feed.js')
+    startGrpcFeed({
+      url: GRPC_URL,
+      token: GRPC_TOKEN,
+      programId: sodaProgramId.toBase58(),
+      onTransaction: (tx) => {
+        processLogs(tx.signature, tx.logs).catch((e) =>
+          log(`${C.red}log processing failed:${C.reset} ${(e as Error).message}`),
+        )
+      },
+      log,
+    })
+  } else {
+    connection.onLogs(sodaProgramId, async (logs) => {
+      if (logs.err) return
+      await processLogs(logs.signature, logs.logs)
+    })
+  }
   log('subscribed; waiting for SigRequested events…')
+}
+
+/**
+ * soda's AlreadyCompleted is custom error 6000 (0x1770). A Beam transaction
+ * has no preflight, so it shows up as an on-chain `{"Custom":6000}` rather
+ * than as the preflight message the plain path matches.
+ */
+function isAlreadyCompleted(text: string): boolean {
+  return (
+    text.includes('0x1770') ||
+    text.includes('"Custom":6000') ||
+    text.toLowerCase().includes('alreadycompleted')
+  )
 }
 
 async function handleSigRequested(
@@ -217,6 +320,7 @@ async function handleSigRequested(
   payer: Keypair,
   sodaProgramId: PublicKey,
   committeePda: PublicKey,
+  beam: Beam | null,
   ev: SigRequested,
 ): Promise<void> {
   log(`${C.yellow}SigRequested${C.reset} sig_request=${ev.sigRequest.toBase58()} requester=${ev.requester.toBase58()}`)
@@ -265,6 +369,30 @@ async function handleSigRequested(
     ],
     data,
   })
+
+  if (beam) {
+    try {
+      const landed = await beam.finalize(connection, payer, ix)
+      if (!landed.err) {
+        log(`${C.green}finalize_signature landed via Beam${C.reset} tx=${landed.signature}`)
+        return
+      }
+      const errText = JSON.stringify(landed.err)
+      if (isAlreadyCompleted(errText)) {
+        log(`${C.dim}already completed (idempotent)${C.reset}`)
+        return
+      }
+      // It landed but failed, for example a payer too poor for the tip. The
+      // plain path below has no tip and runs preflight, so it either succeeds
+      // or reports the real finalize error.
+      log(`${C.yellow}Beam tx ${landed.signature} failed on-chain (${errText}); falling back to sendRawTransaction${C.reset}`)
+    } catch (e) {
+      // Refused, unreachable, or not landed in time. Resending is safe: if the
+      // Beam transaction lands after all, soda rejects whichever finalize
+      // arrives second with AlreadyCompleted.
+      log(`${C.yellow}Beam failed (${(e as Error).message}); falling back to sendRawTransaction${C.reset}`)
+    }
+  }
 
   try {
     const tx = new Transaction().add(ix)

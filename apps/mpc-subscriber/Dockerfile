@@ -7,8 +7,17 @@
 #   MPC_COORDINATOR_URL     the coordinator this subscriber drives
 #   MPC_COORDINATOR_TOKEN   bearer token the coordinator requires
 #   ANCHOR_WALLET_JSON      fee-payer keypair, as the 64-number JSON array
+#
+# Optional, all off by default (see the top of src/index.ts):
+#   SODA_PROGRAM_ID                         soda deployment to serve (mainnet)
+#   SOLAMI_GRPC_URL + SOLAMI_GRPC_TOKEN     events from Yellowstone gRPC
+#   SOLAMI_SWQOS_KEY (+ SOLAMI_BEAM_TIP_SOL) land finalize via Solami Beam
+#
+# Debian, not Alpine: Beam's QUIC library (@matrixai/quic) ships one Linux
+# x64 binary, linked against glibc (it needs GLIBC_2.34; bookworm has 2.36).
+# musl cannot load it. Build for linux/amd64: there is no arm64 Linux build.
 
-FROM node:22-alpine AS deps
+FROM node:22-bookworm-slim AS deps
 RUN corepack enable
 WORKDIR /repo
 
@@ -18,7 +27,7 @@ COPY packages/soda-sdk/package.json packages/soda-sdk/
 
 RUN pnpm install --filter mpc-subscriber... --frozen-lockfile
 
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 RUN corepack enable
 WORKDIR /repo
 
