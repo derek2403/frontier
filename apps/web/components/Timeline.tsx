@@ -6,6 +6,8 @@
 // stage labels as a prop and only the words change per chain. The EVM labels
 // are the default so the original page needs no changes.
 
+import { SOLANA_CLUSTER_LABEL } from "@/lib/solana-cluster";
+
 export type Step = "idle" | "active" | "done" | "error";
 
 export type TimelineKey =
@@ -31,7 +33,7 @@ export const EVM_TIMELINE_STEPS: TimelineStep[] = [
     key: "signEthTransfer",
     label: "Solana: sign_eth_transfer",
     sub: "Your wallet is the only human approval in the whole run",
-    actor: "eth_demo program · Solana devnet",
+    actor: `eth_demo program · Solana ${SOLANA_CLUSTER_LABEL}`,
     details: [
       "eth_demo builds the EVM transaction on-chain and keccaks it,",
       "then CPIs soda::request_signature.",
@@ -57,7 +59,8 @@ export const EVM_TIMELINE_STEPS: TimelineStep[] = [
     sub: "Two nodes, one signature, neither holds the key",
     actor: "soda-mpc-coordinator → soda-mpc-node-p1 + p2",
     details: [
-      "soda-mpc-subscriber sees the event and sends only the account address.",
+      "soda-mpc-subscriber sees the event over Solami gRPC and sends only",
+      "the account address.",
       "p1 and p2 each read that account from their OWN Solana RPC and",
       "re-derive the tweak — a compromised caller cannot choose the payload.",
       "",
@@ -81,8 +84,11 @@ export const EVM_TIMELINE_STEPS: TimelineStep[] = [
       "foreign_pk_xy the program derived at request time.",
       "On a mismatch the request stays incomplete and nothing is broadcast.",
       "",
-      "Submitted by soda-mpc-subscriber, or by this page if it gets there",
-      "first. Either is fine — the program refuses a second signature.",
+      "Submitted by soda-mpc-subscriber through Solami Beam (stake-weighted",
+      "landing), or by this page if it gets there first.",
+      "",
+      "Either way the program accepts exactly one signature",
+      "and refuses a second.",
     ],
   },
   {
