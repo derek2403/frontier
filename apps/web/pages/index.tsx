@@ -266,7 +266,7 @@ type RunResult = {
   signedHex: string;
   ethTxHash: string;
   signEthTransferTx: string;
-  finalizeSignatureTx: string;
+  finalizeSignatureTx: string | null;
   payloadHex: string;
 };
 
@@ -767,7 +767,7 @@ export default function Home() {
       const finalize = (await finalizeRes.json()) as {
         ethTxHash: string;
         signedHex: string;
-        finalizeSignatureTx: string;
+        finalizeSignatureTx: string | null;
         recoveryId: number;
         ethAddress: string;
       };
@@ -867,24 +867,34 @@ export default function Home() {
                 <div className="text-xs uppercase tracking-wider text-emerald-300/70">
                   Solana · finalize_signature (Helius XRAY)
                 </div>
-                <div className="rounded-lg bg-white p-3">
-                  <QRCodeSVG
-                    value={solanaTxUrl(r.finalizeSignatureTx)}
-                    size={160}
-                    bgColor="#ffffff"
-                    fgColor="#000000"
-                    level="M"
-                    className="mx-auto block"
-                  />
-                </div>
-                <a
-                  href={solanaTxUrl(r.finalizeSignatureTx)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
-                >
-                  {r.finalizeSignatureTx}
-                </a>
+                {r.finalizeSignatureTx ? (
+                  <>
+                    <div className="rounded-lg bg-white p-3">
+                      <QRCodeSVG
+                        value={solanaTxUrl(r.finalizeSignatureTx)}
+                        size={160}
+                        bgColor="#ffffff"
+                        fgColor="#000000"
+                        level="M"
+                        className="mx-auto block"
+                      />
+                    </div>
+                    <a
+                      href={solanaTxUrl(r.finalizeSignatureTx)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block break-all font-mono text-xs text-emerald-200 underline hover:text-emerald-100"
+                    >
+                      {r.finalizeSignatureTx}
+                    </a>
+                  </>
+                ) : (
+                  // The subscriber finalized first and its transaction could not be
+                  // looked up. The run is complete either way; only the link is missing.
+                  <div className="text-xs text-emerald-200/80">
+                    Finalized on Solana by the MPC subscriber (via Solami Beam).
+                  </div>
+                )}
               </div>
             </div>
 

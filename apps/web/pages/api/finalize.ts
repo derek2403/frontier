@@ -57,7 +57,7 @@ type FinalizeReq = {
 type FinalizeRes = {
   ethTxHash: string;
   signedHex: string;
-  finalizeSignatureTx: string;
+  finalizeSignatureTx: string | null;
   recoveryId: number;
   ethAddress: string;
 };

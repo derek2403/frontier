@@ -53,7 +53,7 @@ type FinalizeReq = {
 type FinalizeRes = {
   digest: string;
   status: "SUCCESS";
-  finalizeSignatureTx: string;
+  finalizeSignatureTx: string | null;
   recoveryId: number;
   suiAddress: string;
   explorerTx: string;

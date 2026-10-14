@@ -369,7 +369,11 @@ export async function submitFinalizeSignature(
 export type Finalized = {
   sigBytes: Buffer;
   recoveryId: number;
-  finalizeSignatureTx: string;
+  /**
+   * The transaction that recorded it. Null when somebody else finalized and
+   * the lookup could not name their transaction; the run is still complete.
+   */
+  finalizeSignatureTx: string | null;
   /** "self" if this route submitted finalize_signature, "elsewhere" if it found it already done. */
   finalizedBy: "self" | "elsewhere";
 };
@@ -395,17 +399,59 @@ function isAlreadyCompleted(e: unknown): boolean {
 async function findFinalizeTx(
   session: SodaSession,
   sigRequestPda: PublicKey,
-): Promise<string> {
-  const sigs = await session.connection.getSignaturesForAddress(sigRequestPda, {
-    limit: 10,
-  });
-  const ok = sigs.find((s) => s.err === null);
-  if (!ok) {
-    throw new Error(
-      `SigRequest ${sigRequestPda.toBase58()} is completed but no successful transaction references it`,
-    );
+): Promise<string | null> {
+  // This lookup only feeds the "finalize_signature" link on the page; the
+  // signature itself was already read from the SigRequest account. So it must
+  // never fail the run. Solami's RPC returns no result for
+  // getSignaturesForAddress (a historical, indexed call): on 14 Oct a run
+  // that had landed and broadcast still ended in a 500 here. The cluster's
+  // public endpoint answers it, so it is asked first.
+  const lookups: Array<[string, Connection]> = [
+    ["history RPC", new Connection(historyRpc(), "confirmed")],
+    ["configured RPC", session.connection],
+  ];
+  for (const [label, conn] of lookups) {
+    // A SigRequest is written by exactly two transactions, creation and
+    // finalize. Until both are indexed, the newest one may still be the
+    // creation, so wait for two rather than return the wrong transaction.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const sigs = await withTimeout(
+          conn.getSignaturesForAddress(sigRequestPda, { limit: 10 }, "confirmed"),
+          5_000,
+        );
+        const ok = sigs.filter((s) => s.err === null);
+        if (ok.length >= 2) return ok[0].signature;
+      } catch (e) {
+        console.warn(`finalize lookup via ${label} failed: ${(e as Error).message}`);
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
   }
-  return ok.signature;
+  return null;
+}
+
+/**
+ * RPC for the one historical lookup above. SOLANA_HISTORY_RPC_URL overrides;
+ * otherwise the public endpoint of the cluster the page is built for.
+ */
+function historyRpc(): string {
+  const set = process.env.SOLANA_HISTORY_RPC_URL?.trim();
+  if (set) return set;
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "").trim();
+  return cluster === "mainnet-beta" || cluster === "mainnet"
+    ? "https://api.mainnet-beta.solana.com"
+    : "https://api.devnet.solana.com";
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms),
+    ),
+  ]);
 }
 
 /**
