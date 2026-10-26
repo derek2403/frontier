@@ -1,0 +1,22 @@
+[package]
+name = "inclusion"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Reads our local Alpenglow node's blockstore and builds an inclusion proof:
+# transaction bytes -> data shred(s) -> FEC set root -> double Merkle root
+# (the block_id the finality certificate signs). Every hash is recomputed
+# here from raw shred bytes; the blockstore's own block_id is only compared.
+[dependencies]
+solana-ledger = { version = "=4.3.2", features = ["agave-unstable-api"] }
+sha2 = "0.10"
+hex = "0.4"
+serde_json = "1"
+
+[workspace]
+
+# Agave builds solana-ledger against its own rocksdb fork (see agave Cargo.toml).
+[patch.crates-io]
+librocksdb-sys = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }
+rocksdb = { git = "https://github.com/anza-xyz/rust-rocksdb", rev = "4dba80dfe9434e595a971f5b2985ff9ba4fb31e7" }

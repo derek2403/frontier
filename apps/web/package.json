@@ -10,19 +10,22 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
-    "@solana/web3.js": "^1.95.0",
+    "@grpc/grpc-js": "1.12.5",
+    "@grpc/proto-loader": "0.7.13",
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0",
+    "@soda-sdk/core": "workspace:*",
     "@solana/wallet-adapter-base": "^0.9.23",
-    "qrcode.react": "^4.2.0",
     "@solana/wallet-adapter-phantom": "^0.9.29",
     "@solana/wallet-adapter-react": "^0.15.35",
     "@solana/wallet-adapter-react-ui": "^0.9.35",
-    "@noble/curves": "^1.6.0",
-    "@noble/hashes": "^1.5.0",
+    "@solana/web3.js": "^1.95.0",
     "bn.js": "^5.2.1",
     "next": "16.2.4",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "@soda-sdk/core": "workspace:*"
+    "viem": "2.21.54"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -1,0 +1,13 @@
+{
+  "chainId": 84532,
+  "lightClient": "0xfa0d52e9dd5567115b8c95e095e5608799af8665",
+  "factory": "0xe3c1a3837e92baa30e2bd4e115d6aef1844a2bbc",
+  "validators": 1000,
+  "thresholdPct": 60,
+  "deployedAt": "2026-10-21T16:49:10.772Z",
+  "deployTxs": {
+    "lightClient": "0x1d1bc1f5d17cf661b4ccfba3ab8c1551399ff95dec17d3d3dbced66be2d6bcc1",
+    "factory": "0xe2045cd3bfa69a70dc76e5cef84ff9ab5bfb3ecbfbf7acd0401d847938329dff",
+    "epoch": "0x877bc50c4635ae31e53c167e5bf08d04486675e8a5ff6a360c4ac69c86fcdff0"
+  }
+}

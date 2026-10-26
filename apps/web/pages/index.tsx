@@ -1160,9 +1160,17 @@ const data  = ${
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="text-xl font-semibold">SODA</div>
-            <div className="hidden text-sm text-zinc-500 sm:block">
-              Solana-Owned Derived Authority
-            </div>
+            <nav className="flex rounded-lg border border-zinc-800 p-0.5 text-sm">
+              <span className="rounded-md bg-zinc-800 px-3 py-1 text-zinc-100">
+                MPC · live
+              </span>
+              <a
+                href="/alpenglow"
+                className="rounded-md px-3 py-1 text-zinc-400 hover:text-zinc-100"
+              >
+                Alpenglow · testnet
+              </a>
+            </nav>
           </div>
           {/* The wallet button lives in step 1 only. A second copy up here
               made "connect" look like page chrome rather than the first act. */}
